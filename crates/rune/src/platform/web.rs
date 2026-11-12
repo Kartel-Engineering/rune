@@ -264,9 +264,14 @@ async fn try_backend(canvas: &web_sys::HtmlCanvasElement, backends: wgpu::Backen
     let mut descriptor = wgpu::InstanceDescriptor::new_without_display_handle();
     descriptor.backends = backends;
     let instance = wgpu::Instance::new(descriptor);
-    let surface = instance.create_surface(wgpu::SurfaceTarget::Canvas(canvas.clone())).map_err(|e| e.to_string())?;
+    let make_surface = || instance.create_surface(wgpu::SurfaceTarget::Canvas(canvas.clone())).map_err(|e| e.to_string());
+    // A WebGPU surface claims the canvas for good, and `getContext('webgl2')` then returns null:
+    // WebGPU, which ignores `compatible_surface`, gets its adapter and device first, so a browser
+    // that has `navigator.gpu` but no adapter leaves the canvas to WebGL 2. The GL adapter comes
+    // from the canvas's own context, so its surface comes first.
+    let early = if webgl { Some(make_surface()?) } else { None };
     let adapter = instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference: wgpu::PowerPreference::LowPower, compatible_surface: Some(&surface),
+        power_preference: wgpu::PowerPreference::LowPower, compatible_surface: early.as_ref(),
         force_fallback_adapter: false, apply_limit_buckets: false,
     }).await.map_err(|e| e.to_string())?;
     let required_limits = if webgl {
@@ -279,6 +284,7 @@ async fn try_backend(canvas: &web_sys::HtmlCanvasElement, backends: wgpu::Backen
         required_limits, experimental_features: Default::default(),
         memory_hints: Default::default(), trace: Default::default(),
     }).await.map_err(|e| format!("GPU device: {e}"))?;
+    let surface = match early { Some(surface) => surface, None => make_surface()? };
     Ok((Gpu::from_device(instance, adapter, device, queue), surface))
 }
 
