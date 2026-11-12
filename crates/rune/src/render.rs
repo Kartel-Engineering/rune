@@ -595,9 +595,24 @@ impl Gpu {
 
     /// One instance per set of backends for the whole process: a new one per device was a new
     /// DXGI factory and adapter list each time a window or overlay made a device (hex#1268).
+    #[cfg(not(target_arch = "wasm32"))]
     fn wgpu_instance_on(backends: wgpu::Backends) -> wgpu::Instance {
         static MADE: std::sync::Mutex<Vec<(wgpu::Backends, wgpu::Instance)>> = std::sync::Mutex::new(Vec::new());
         let mut made = MADE.lock().unwrap_or_else(|e| e.into_inner());
+        Self::cached_instance(&mut made, backends)
+    }
+
+    /// The browser has one thread, and with the `webgl` feature wgpu's types are neither `Send`
+    /// nor `Sync` there, so a static can't hold them: a thread-local does.
+    #[cfg(target_arch = "wasm32")]
+    fn wgpu_instance_on(backends: wgpu::Backends) -> wgpu::Instance {
+        thread_local! {
+            static MADE: std::cell::RefCell<Vec<(wgpu::Backends, wgpu::Instance)>> = const { std::cell::RefCell::new(Vec::new()) };
+        }
+        MADE.with_borrow_mut(|made| Self::cached_instance(made, backends))
+    }
+
+    fn cached_instance(made: &mut Vec<(wgpu::Backends, wgpu::Instance)>, backends: wgpu::Backends) -> wgpu::Instance {
         if let Some((_, instance)) = made.iter().find(|(made, _)| *made == backends) { return instance.clone(); }
         let instance = Self::new_wgpu_instance(backends);
         made.push((backends, instance.clone()));
