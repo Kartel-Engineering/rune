@@ -283,3 +283,38 @@ fn mac_meta_copy_and_select_all_work_on_selectable_text() {
     crate::clipboard::flush_memory(&mut rt);
     assert_eq!(board.text().as_deref().map(String::as_str), Some("First paragraph\nSecond paragraph"));
 }
+
+fn settings(open: &bool, _: &mut Cx<bool>) -> El {
+    let mut root = crate::col().key("root").size(400.0, 400.0)
+        .child(crate::text("Settings").role("heading").level(1))
+        .child(crate::row().key("remove").role("button").label("Remove").size(80.0, 30.0).on_press(|s: &mut bool| *s = true));
+    if *open {
+        root = root.child(crate::col().key("confirm").role("dialog").label("Delete this item?").size(200.0, 100.0)
+            .modal(true, |s: &mut bool| *s = false)
+            .child(crate::row().key("ok").role("button").label("Delete").size(60.0, 30.0).on_press(|s: &mut bool| *s = false))
+            .child(crate::row().key("cancel").role("button").label("Cancel").size(60.0, 30.0).on_press(|s: &mut bool| *s = false)));
+    }
+    root
+}
+
+fn mirrored(rt: &Runtime<bool>) -> Vec<String> {
+    rt.web_a11y_items().into_iter().map(|i| format!("{}:{}", i.kind, i.text)).collect()
+}
+
+#[test]
+fn an_open_modal_keeps_its_controls_in_the_mirror_and_leaves_out_what_is_behind_it() {
+    let mut rt = Runtime::new(false, settings, (400.0, 400.0), Env::default());
+    rt.frame(0.0);
+    assert_eq!(mirrored(&rt), ["heading:Settings", "button:Remove"]);
+
+    let remove = rt.web_a11y_items()[1].path.clone();
+    assert!(rt.web_a11y_action(&json!({"kind": "a11y_press", "path": remove})));
+    for _ in 0..60 { rt.frame(1.0 / 60.0); }
+    assert!(rt.state, "the press opened the dialog");
+    assert_eq!(mirrored(&rt), ["button:Delete", "button:Cancel"]);
+
+    let cancel = rt.web_a11y_items()[1].path.clone();
+    assert!(rt.web_a11y_action(&json!({"kind": "a11y_press", "path": cancel})));
+    for _ in 0..60 { rt.frame(1.0 / 60.0); }
+    assert_eq!(mirrored(&rt), ["heading:Settings", "button:Remove"]);
+}

@@ -309,6 +309,15 @@ impl<S: 'static> Runtime<S> {
         let mut inline: Option<Inline> = None;
         let ends = self.subtree_ends();
         let selects = self.page_text_selects();
+        // The nodes that contain the open modal, marked in one pass up the parent links.
+        let mut holds_modal = vec![false; self.nodes.len()];
+        for i in (0..self.nodes.len()).filter(|&i| self.modal_scope.is_some() && self.modal_member(i)) {
+            let mut p = self.nodes[i].parent;
+            while let Some(j) = p.filter(|&j| !holds_modal[j]) {
+                holds_modal[j] = true;
+                p = self.nodes[j].parent;
+            }
+        }
         // Open containers: (end of their node subtree, their item index).
         let mut open: Vec<(usize, usize)> = Vec::new();
         // Open horizontal scrollers and how far the browser has scrolled each, so their content
@@ -321,10 +330,19 @@ impl<S: 'static> Runtime<S> {
             let parent = open.last().map(|&(_, item)| item);
             let n = &self.nodes[i];
             let end = ends[i];
-            if !self.allowed(i) || self.subtree_exiting(i) || n.vis.opacity <= 0.01 || n.a11y.hidden
+            // Behind an open modal the mirror holds the modal and what contains it (as the
+            // native tree does), so a node outside it is walked through only when the modal is
+            // inside it, and it adds no item of its own.
+            let behind = !self.modal_member(i);
+            if (!self.allowed(i) && !(behind && holds_modal[i])) || self.subtree_exiting(i) || n.vis.opacity <= 0.01 || n.a11y.hidden
                 || matches!(n.role, "none" | "presentation")
             {
                 i = end;
+                last_flow_parent = None;
+                continue;
+            }
+            if behind {
+                i += 1;
                 last_flow_parent = None;
                 continue;
             }
