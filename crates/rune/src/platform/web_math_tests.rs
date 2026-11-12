@@ -51,3 +51,19 @@ fn other_windows_reconfigure_on_every_size_change() {
     // A window hidden to nothing keeps its surface until it has a size again.
     assert_eq!(should_reconfigure_surface((800, 600), (0, 0), false), ((800, 600), false));
 }
+
+#[test]
+fn a_surface_draws_in_the_format_the_blend_mode_asks_for() {
+    use wgpu::TextureFormat::{Bgra8Unorm, Bgra8UnormSrgb, Rgba8Unorm, Rgba8UnormSrgb};
+    // WebGL 2 offers both, and its default is the sRGB one: gamma-space blending takes the other.
+    let gl = [Rgba8Unorm, Rgba8UnormSrgb];
+    assert_eq!(blend_target(&gl, Rgba8UnormSrgb, true, false), (Rgba8Unorm, Rgba8Unorm));
+    assert_eq!(blend_target(&gl, Rgba8Unorm, false, false), (Rgba8UnormSrgb, Rgba8UnormSrgb));
+    // WebGPU offers no sRGB format: linear blending draws through an sRGB view of the surface's.
+    let gpu = [Bgra8Unorm, Rgba8Unorm];
+    assert_eq!(blend_target(&gpu, Bgra8Unorm, true, true), (Bgra8Unorm, Bgra8Unorm));
+    assert_eq!(blend_target(&gpu, Bgra8Unorm, false, true), (Bgra8Unorm, Bgra8UnormSrgb));
+    // A surface with neither way to the wanted format keeps its own: the caller tells the runtime.
+    let (_, draws) = blend_target(&[Rgba8UnormSrgb], Rgba8UnormSrgb, true, false);
+    assert_eq!(draws, Rgba8UnormSrgb);
+}

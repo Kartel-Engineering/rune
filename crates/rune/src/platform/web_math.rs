@@ -35,6 +35,21 @@ pub(crate) fn should_reconfigure_surface(current: (u32, u32), next: (u32, u32), 
     (next, true)
 }
 
+/// The format the surface is configured with and the format the renderer draws in, for a
+/// runtime that blends in sRGB encoding (`srgb_blend`) or not. `configured` is the surface's
+/// current format, `offered` what it supports, and `views` whether it takes view formats (WebGPU
+/// does, WebGL 2 does not). The wanted variant of `configured` is used when the surface offers it,
+/// or as a view of it; otherwise the surface keeps `configured`, and the caller must tell the
+/// runtime so (`!draws.is_srgb()`), or its colours are encoded twice.
+pub(crate) fn blend_target(offered: &[wgpu::TextureFormat], configured: wgpu::TextureFormat, srgb_blend: bool, views: bool)
+    -> (wgpu::TextureFormat, wgpu::TextureFormat) {
+    let wanted = if srgb_blend { configured.remove_srgb_suffix() } else { configured.add_srgb_suffix() };
+    if wanted == configured { (configured, configured) }
+    else if offered.contains(&wanted) { (wanted, wanted) }
+    else if views { (configured, wanted) }
+    else { (configured, configured) }
+}
+
 #[cfg(test)]
 #[path = "web_math_tests.rs"]
 mod tests;

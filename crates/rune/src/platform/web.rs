@@ -502,14 +502,11 @@ impl<S: 'static> ApplicationHandler<Wake> for Browser<S> {
             config.present_mode = wgpu::PresentMode::Fifo;
             let caps = surface.get_capabilities(&gpu.adapter);
             config.usage |= caps.usages & wgpu::TextureUsages::COPY_SRC;
-            let wanted = if srgb_blend { config.format.remove_srgb_suffix() } else { config.format.add_srgb_suffix() };
             let is_gl = gpu.adapter.get_info().backend == wgpu::Backend::Gl;
-            let format = if wanted != config.format && !is_gl {
-                config.view_formats.push(wanted);
-                wanted
-            } else {
-                config.format
-            };
+            let (surface_format, format) = web_math::blend_target(&caps.formats, config.format, srgb_blend, !is_gl);
+            config.format = surface_format;
+            if format != surface_format { config.view_formats.push(format); }
+            rt.set_srgb_blend(!format.is_srgb());
             surface.configure(&gpu.device, &config);
             let (lost, proxy) = (self.lost.clone(), self.proxy.clone());
             health::watch(&gpu.device, move |why| {
@@ -574,12 +571,16 @@ impl<S: 'static> ApplicationHandler<Wake> for Browser<S> {
                 if !r.rt.surfaces.is_empty() {
                     error("native video surfaces are unsupported on web", window.canvas().as_ref(), r.embedded, r.document); self.end(event_loop); return;
                 }
-                if r.gpu.adapter.get_info().backend != wgpu::Backend::Gl && r.renderer.srgb_blend() != r.rt.srgb_blend() {
-                    let format = if r.rt.srgb_blend() { r.config.format.remove_srgb_suffix() } else { r.config.format.add_srgb_suffix() };
-                    if format != r.config.format && !r.config.view_formats.contains(&format) {
-                        r.config.view_formats.push(format);
+                if r.renderer.srgb_blend() != r.rt.srgb_blend() {
+                    let offered = r.surface.get_capabilities(&r.gpu.adapter).formats;
+                    let is_gl = r.gpu.adapter.get_info().backend == wgpu::Backend::Gl;
+                    let (surface_format, format) = web_math::blend_target(&offered, r.config.format, r.rt.srgb_blend(), !is_gl);
+                    if surface_format != r.config.format || (format != surface_format && !r.config.view_formats.contains(&format)) {
+                        r.config.format = surface_format;
+                        if format != surface_format && !r.config.view_formats.contains(&format) { r.config.view_formats.push(format); }
                         r.surface.configure(&r.gpu.device, &r.config);
                     }
+                    r.rt.set_srgb_blend(!format.is_srgb());
                     crate::window::rebuild_renderer(&r.gpu.device, &mut r.renderer, format, &mut r.rt);
                 }
                 let frame = match r.surface.get_current_texture() {
