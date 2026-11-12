@@ -256,7 +256,8 @@ impl<S: 'static> Runtime<S> {
         let ends = self.page.is_some().then(|| self.subtree_ends());
         (0..self.nodes.len()).filter_map(|i| {
             let n = &self.nodes[i];
-            let scroller = ends.as_ref().filter(|_| n.scroll_axes == crate::el::ScrollAxes::X).map(|ends| ends[i]);
+            // Behind an open modal the items walk through a scroller and add no shift for it, so the digest adds none either.
+            let scroller = ends.as_ref().filter(|_| n.scroll_axes == crate::el::ScrollAxes::X && self.modal_member(i)).map(|ends| ends[i]);
             (scroller.is_some() || n.text.is_some() || n.handlers.on_press.is_some()
                 || n.a11y.more.as_ref().is_some_and(|m| m.href.is_some())
                 || container_tag(n.role).is_some() || matches!(n.role, "heading" | "image" | "img" | "button"))

@@ -409,3 +409,37 @@ fn a_rebuild_that_makes_the_same_json_is_still_a_rebuild() {
     assert!(rt.web_a11y(&mut mirror, &digest).is_none(), "the mirror it rebuilds shows the same items");
     assert!(!rt.web_a11y_stale(&mirror, &rt.web_a11y_digest(&mirror)), "the rebuild took the new rects");
 }
+
+/// A page whose horizontal viewport holds an open dialog.
+fn dialog_strip(_: &(), _: &mut Cx<()>) -> El {
+    crate::col().w_full().role("main")
+        .child(crate::row().key("scroll").w(300.0).h(120.0).scroll_x()
+            .child(crate::col().key("dialog").role("dialog").label("Delete this item?").size(200.0, 100.0)
+                .modal(true, |_: &mut ()| {})
+                .child(crate::row().key("ok").role("button").label("Delete").size(60.0, 30.0).on_press(|_: &mut ()| {})))
+            .child(crate::el().key("wide").size(600.0, 10.0)))
+}
+
+#[test]
+fn a_dialog_in_a_horizontal_viewport_follows_the_scroll_as_drawn() {
+    // Behind an open modal the mirror holds no scroller, so the browser scrolls nothing and the
+    // dialog's controls sit where they are drawn. A scroll with no commit (a `scroll_to` glide)
+    // moves that drawing, so the mirror must rebuild.
+    let mut rt = Runtime::new((), dialog_strip, (400.0, 300.0), Env::default());
+    rt.page_mode();
+    rt.frame(0.0);
+    let items = rt.web_a11y_items();
+    assert!(items.iter().all(|i| i.kind != "scroll_x"), "the viewport behind the dialog is no scroller");
+    let ok = |rt: &Runtime<()>| rt.web_a11y_items().iter().find(|i| i.text == "Delete").map(|i| i.rect[0]);
+    let placed = ok(&rt).expect("the dialog's button mirrors");
+    let mut mirror = A11yMirror::default();
+    assert!(sync(&rt, &mut mirror).is_some());
+
+    let path = rt.nodes.iter().find(|n| n.key.as_deref() == Some("scroll")).expect("the viewport").path.clone();
+    assert!(rt.set_page_scroll_x(&path, 120.0), "the viewport moved");
+    rt.frame(0.0);
+    assert_eq!(ok(&rt), Some(placed - 120.0), "the button is drawn where the scroll put it");
+    assert!(rt.web_a11y_stale(&mirror, &rt.web_a11y_digest(&mirror)), "the drawn rect moved, so the mirror rebuilds");
+    assert!(sync(&rt, &mut mirror).is_some());
+    assert_eq!(mirror.json, rt.a11y_json(), "the mirror shows the button where it is drawn");
+}
