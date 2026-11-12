@@ -131,9 +131,11 @@ impl<S: 'static> Running<S> {
             && self.input.a11y_at.is_some_and(|at| now.duration_since(at).as_secs_f64() < 0.15)
         {
             schedule_a11y(&self.input.handle);
-        } else if let Some(json) = self.rt.web_a11y(&mut self.input.a11y, &digest) {
-            sync_a11y(&self.input.handle, json);
+        } else if self.rt.web_a11y_stale(&self.input.a11y, &digest) {
+            // Every rebuild starts the throttle, also one that makes the same JSON: a node the
+            // mirror holds but never shows (pressable and hidden) can move without end.
             self.input.a11y_at = Some(now);
+            if let Some(json) = self.rt.web_a11y(&mut self.input.a11y, &digest) { sync_a11y(&self.input.handle, json); }
         }
         if self.input.document {
             let page = (self.rt.page_height().ceil(), self.rt.has_focus());

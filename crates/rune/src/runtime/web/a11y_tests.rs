@@ -213,6 +213,7 @@ fn a_page_mirrors_a_horizontal_viewport_as_a_scroller_the_browser_scrolls() {
     let path = scroll.path.clone();
     assert!(rt.set_page_scroll_x(&path, 120.0), "the browser scrolled the strip");
     rt.frame(0.0);
+    assert!(!rt.web_a11y_stale(&mirror, &rt.web_a11y_digest(&mirror)), "the container's own scroll rebuilds nothing");
     assert!(sync(&rt, &mut mirror).is_none(), "the container's own scroll leaves the mirror alone");
     let after = rt.web_a11y_items();
     let code = after.iter().find(|i| i.text.contains("println")).expect("the code still mirrors");
@@ -381,4 +382,30 @@ fn motion_of_a_node_outside_the_mirror_leaves_the_mirror_alone() {
     assert_ne!(rt.mirror_rect(bar, 0.0), before, "the bar is still gliding");
     assert!(!moved_only(&rt, &mirror), "a node that is no item moved");
     assert!(sync(&rt, &mut mirror).is_none());
+}
+
+fn hidden_spin(moved: &bool, _: &mut Cx<bool>) -> El {
+    crate::col().w_full().h_full().padding(40.0)
+        .child(crate::el().key("target").w(200.0).h(60.0).label("Target").on_press(|_: &mut bool| {}))
+        .child(crate::el().key("bar").w(if *moved { 200.0 } else { 20.0 }).h(10.0).on_press(|_: &mut bool| {}).a11y_hidden())
+        .child(crate::el().key("move").w(200.0).h(40.0).label("Move").on_press(|s: &mut bool| *s = !*s))
+}
+
+#[test]
+fn a_rebuild_that_makes_the_same_json_is_still_a_rebuild() {
+    // A pressable that is hidden from the mirror can become an item, so its motion rebuilds the
+    // mirror, to the same JSON. The shell starts its throttle on the rebuild, not on new JSON.
+    let mut rt = Runtime::new(false, hidden_spin, (400.0, 400.0), Env::default());
+    rt.frame(0.0);
+    let mut mirror = A11yMirror::default();
+    assert!(sync(&rt, &mut mirror).is_some());
+    let press = rt.web_a11y_items().iter().find(|i| i.text == "Move").expect("the button").path.clone();
+    assert!(rt.web_a11y_action(&json!({"kind": "a11y_press", "path": press})));
+    rt.frame(1.0 / 60.0);
+    sync(&rt, &mut mirror);
+    rt.frame(1.0 / 60.0);
+    let digest = rt.web_a11y_digest(&mirror);
+    assert!(rt.web_a11y_stale(&mirror, &digest), "the hidden pressable is still gliding");
+    assert!(rt.web_a11y(&mut mirror, &digest).is_none(), "the mirror it rebuilds shows the same items");
+    assert!(!rt.web_a11y_stale(&mirror, &rt.web_a11y_digest(&mirror)), "the rebuild took the new rects");
 }

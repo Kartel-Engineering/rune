@@ -18,10 +18,14 @@ pub(crate) struct A11yMirror {
     /// The nodes that can become an item (`Runtime::mirror_candidates`), so a node that never
     /// does (a spinner, a decoration) can move without a rebuild. Valid while `commits` and the
     /// node count hold: only a commit or `prune_exited` (which drops nodes) moves node indices.
-    nodes: Vec<usize>,
+    nodes: Vec<Candidate>,
     nodes_len: usize,
     json: String,
 }
+
+/// A node that can become an item, and, when it is a page's horizontal scroller, where its node
+/// subtree ends: its content mirrors shifted by how far the browser scrolled it.
+type Candidate = (usize, Option<usize>);
 
 /// What a frame's mirror checks read, taken once per frame by [`Runtime::web_a11y_digest`].
 pub(crate) struct A11yDigest {
@@ -248,22 +252,39 @@ impl<S: 'static> Runtime<S> {
     /// The nodes that can become an item, whatever they are drawn as now: one that is hidden or
     /// empty joins the mirror when motion shows or grows it. Read from the nodes alone, not from
     /// the walk that builds the items, which skips such a node.
-    fn mirror_candidates(&self) -> Vec<usize> {
-        (0..self.nodes.len()).filter(|&i| {
+    fn mirror_candidates(&self) -> Vec<Candidate> {
+        let ends = self.page.is_some().then(|| self.subtree_ends());
+        (0..self.nodes.len()).filter_map(|i| {
             let n = &self.nodes[i];
-            n.text.is_some() || n.handlers.on_press.is_some() || n.a11y.more.as_ref().is_some_and(|m| m.href.is_some())
-                || container_tag(n.role).is_some() || matches!(n.role, "heading" | "image" | "img" | "button")
-                || (self.page.is_some() && n.scroll_axes == crate::el::ScrollAxes::X)
+            let scroller = ends.as_ref().filter(|_| n.scroll_axes == crate::el::ScrollAxes::X).map(|ends| ends[i]);
+            (scroller.is_some() || n.text.is_some() || n.handlers.on_press.is_some()
+                || n.a11y.more.as_ref().is_some_and(|m| m.href.is_some())
+                || container_tag(n.role).is_some() || matches!(n.role, "heading" | "image" | "img" | "button"))
+                .then_some((i, scroller))
         }).collect()
     }
 
+    /// How far the browser has scrolled page scroller `i` to the right, which its content's items add back.
+    fn scroller_offset(&self, i: usize) -> f64 {
+        self.scrolls.get(&self.nodes[i].id).map_or(0.0, |st| st.x.offset)
+    }
+
     /// Where the nodes that can become an item are drawn, in the mirror's coordinates and
-    /// rounded as its items are. An animated layout change moves nodes on frames that commit
-    /// nothing, so this is what tells the mirror that they moved.
-    fn drawn_digest(&self, nodes: &[usize]) -> u64 {
+    /// rounded as its items are (content of a page's horizontal scroller shifted back by the
+    /// scroll, as `web_a11y_items` does, so the browser scrolling it moves nothing). An animated
+    /// layout change moves nodes on frames that commit nothing, so this is what tells the
+    /// mirror that they moved.
+    fn drawn_digest(&self, nodes: &[Candidate]) -> u64 {
         let mut h = std::collections::hash_map::DefaultHasher::new();
-        // `+ 0.0` turns a rounded -0.0 into 0.0, so the sign of a zero is no move.
-        for &i in nodes { self.mirror_rect(i, 0.0).map(|v| (v + 0.0).to_bits()).hash(&mut h); }
+        // The open scrollers: (end of their node subtree, how far each is scrolled).
+        let mut scrollers: Vec<(usize, f64)> = Vec::new();
+        for &(i, scroller) in nodes {
+            while scrollers.last().is_some_and(|&(end, _)| i >= end) { scrollers.pop(); }
+            let shift = if scroller.is_some() { 0.0 } else { scrollers.iter().map(|&(_, offset)| offset).sum() };
+            // `+ 0.0` turns a rounded -0.0 into 0.0, so the sign of a zero is no move.
+            self.mirror_rect(i, shift).map(|v| (v + 0.0).to_bits()).hash(&mut h);
+            if let Some(end) = scroller { scrollers.push((end, self.scroller_offset(i))); }
+        }
         h.finish()
     }
 
@@ -397,7 +418,7 @@ impl<S: 'static> Runtime<S> {
             // compositor's rate, with axis locking, momentum and text selection.
             if self.page.is_some() && n.scroll_axes == crate::el::ScrollAxes::X {
                 let rect = self.mirror_rect(i, 0.0);
-                let offset = self.scrolls.get(&n.id).map_or(0.0, |st| st.x.offset);
+                let offset = self.scroller_offset(i);
                 let mut item = A11yItem::new("scroll_x", &n.path, rect);
                 item.tag = Some("div");
                 item.parent = parent;
@@ -571,17 +592,23 @@ impl<S: 'static> Runtime<S> {
             && ((!document && mirror.scroll_digest != digest.scroll) || digest.drawn != Some(mirror.drawn_digest))
     }
 
-    /// Returns updated JSON only when layout commits, viewport, scroll positions or drawn
-    /// rects changed.
+    fn mirror_viewport(&self) -> (u32, u32) {
+        (self.viewport.0.to_bits(), if self.page.is_some() { 0 } else { self.viewport.1.to_bits() })
+    }
+
+    /// Whether [`Self::web_a11y`] rebuilds the mirror: layout committed, the viewport, scroll
+    /// positions or drawn rects changed since it was built. A rebuild can make the same JSON,
+    /// so the shell reads this, not the result, to know that one ran.
+    pub(crate) fn web_a11y_stale(&self, mirror: &A11yMirror, digest: &A11yDigest) -> bool {
+        !(mirror.commits == self.commits && mirror.viewport == self.mirror_viewport() && mirror.scroll_digest == digest.scroll
+            && digest.drawn == Some(mirror.drawn_digest) && !mirror.json.is_empty())
+    }
+
+    /// Rebuilds a stale mirror. Returns its JSON only when that changed.
     pub(crate) fn web_a11y<'a>(&self, mirror: &'a mut A11yMirror, digest: &A11yDigest) -> Option<&'a str> {
-        let vp = (self.viewport.0.to_bits(), if self.page.is_some() { 0 } else { self.viewport.1.to_bits() });
-        if mirror.commits == self.commits && mirror.viewport == vp && mirror.scroll_digest == digest.scroll
-            && digest.drawn == Some(mirror.drawn_digest) && !mirror.json.is_empty()
-        {
-            return None;
-        }
+        if !self.web_a11y_stale(mirror, digest) { return None; }
         mirror.commits = self.commits;
-        mirror.viewport = vp;
+        mirror.viewport = self.mirror_viewport();
         mirror.scroll_digest = digest.scroll;
         mirror.nodes = self.mirror_candidates();
         mirror.nodes_len = self.nodes.len();
