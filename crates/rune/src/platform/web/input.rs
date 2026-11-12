@@ -121,15 +121,17 @@ impl<S: 'static> Running<S> {
             self.input.families = (sans.to_owned(), mono.to_owned());
             sync_families(&self.input.handle, sans, mono);
         }
-        // While the app scrolls, the mirror follows at most every 150 ms (and once when it stops),
-        // not every frame: rebuilding and restyling every item each frame was most of a scroll
-        // frame's JavaScript. A page's mirror is in document coordinates and doesn't move.
+        // While the app scrolls or animates a layout change, the mirror follows at most every
+        // 150 ms (and once when the motion stops), not every frame: rebuilding and restyling
+        // every item each frame was most of a scroll frame's JavaScript. A page's mirror is in
+        // document coordinates, so scrolling doesn't move it.
         let now = crate::time::Instant::now();
-        if !self.input.document && self.rt.web_a11y_scrolled_only(&self.input.a11y)
+        let digest = self.rt.web_a11y_digest(&self.input.a11y);
+        if self.rt.web_a11y_moved_only(&self.input.a11y, &digest, self.input.document)
             && self.input.a11y_at.is_some_and(|at| now.duration_since(at).as_secs_f64() < 0.15)
         {
             schedule_a11y(&self.input.handle);
-        } else if let Some(json) = self.rt.web_a11y(&mut self.input.a11y) {
+        } else if let Some(json) = self.rt.web_a11y(&mut self.input.a11y, &digest) {
             sync_a11y(&self.input.handle, json);
             self.input.a11y_at = Some(now);
         }
