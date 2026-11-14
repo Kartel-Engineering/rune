@@ -1,5 +1,5 @@
-//! HTML export for [`TextEdit`]: paragraphs as `<p>`, `<ul>`/`<ol>`, `<blockquote>` and
-//! `<pre>`, and marks as inline tags.
+//! HTML export for [`TextEdit`]: paragraphs as `<p>` and `<h1>`…`<h6>`, `<ul>`/`<ol>`,
+//! `<blockquote>` and `<pre>`, and marks as inline tags.
 
 use std::ops::Range;
 
@@ -111,16 +111,20 @@ pub(crate) fn serialize_html(edit: &TextEdit, range: Range<usize>) -> String {
                 }
                 out.push_str("</blockquote>");
             }
-            Block::Paragraph => {
-                out.push_str("<p>");
+            Block::Paragraph | Block::Heading(_) => {
+                let tag = match block {
+                    Block::Heading(l) => format!("h{l}"),
+                    _ => "p".to_owned(),
+                };
+                out.push_str(&format!("<{tag}>"));
                 serialize_inline(edit, paras[idx].1.clone(), &mut out);
                 idx += 1;
-                while idx < paras.len() && paras[idx].3 && paras[idx].2 == Block::Paragraph {
+                while idx < paras.len() && paras[idx].3 && paras[idx].2 == block {
                     out.push_str("<br>");
                     serialize_inline(edit, paras[idx].1.clone(), &mut out);
                     idx += 1;
                 }
-                out.push_str("</p>");
+                out.push_str(&format!("</{tag}>"));
             }
         }
     }

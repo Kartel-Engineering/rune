@@ -162,6 +162,28 @@ impl TextEdit {
                                     self.insert_newline(Block::Quote, false);
                                 }
                             }
+                            Block::Heading(_) => {
+                                // Return at the end of a heading (its last soft-broken line's end)
+                                // starts a paragraph, and at its start leaves an empty paragraph
+                                // above it; inside one, both halves stay headings.
+                                let mut last = self.line_of_byte(b);
+                                while self.soft_breaks.binary_search(&(last as u32 + 1)).is_ok() {
+                                    last += 1;
+                                }
+                                let at_end = b == self.line_range(last).end;
+                                let is_soft =
+                                    self.soft_breaks.binary_search(&(line_idx as u32)).is_ok();
+                                if at_end {
+                                    self.insert_newline(Block::Paragraph, false);
+                                } else if a == line_range.start && !is_soft {
+                                    self.undo_group(|e| {
+                                        e.insert_newline(blk, false);
+                                        e.blocks[line_idx] = Block::Paragraph;
+                                    });
+                                } else {
+                                    self.insert_newline(blk, false);
+                                }
+                            }
                             Block::Paragraph => {
                                 out.submit = true;
                             }
@@ -200,6 +222,7 @@ impl TextEdit {
                                     self.set_block(Block::Paragraph);
                                 }
                             }
+                            Block::Heading(_) => self.set_block(Block::Paragraph),
                             Block::Quote | Block::Code => {
                                 if a == 0 || line_range.is_empty() {
                                     self.set_block(Block::Paragraph);

@@ -205,7 +205,7 @@ impl TextEdit {
 
     fn clamp_list_levels(&mut self) {
         for b in &mut self.blocks {
-            *b = b.with_level(b.list_level().unwrap_or(0));
+            *b = b.clamped();
         }
     }
 
@@ -241,9 +241,9 @@ impl TextEdit {
     }
 
     /// Keep only these kinds of paragraph block, as [`allow_marks`](Self::allow_marks) does for
-    /// marks: `toggle_block` and `set_block` ignore the rest and pasted ones become paragraphs.
-    /// [`Block::Paragraph`] is always allowed, and list levels don't matter (`Block::Bullet(0)`
-    /// allows every bullet).
+    /// marks: `toggle_block` and `set_block` ignore the rest, and pasted, set or loaded ones become
+    /// paragraphs (a heading a bold one). [`Block::Paragraph`] is always allowed, and list and heading levels
+    /// don't matter (`Block::Bullet(0)` allows every bullet, `Block::Heading(1)` every heading).
     pub fn allow_blocks(mut self, blocks: impl IntoIterator<Item = Block>) -> Self {
         self.allowed_blocks = Some(blocks.into_iter().fold(Block::Paragraph.kind_bit(), |bits, b| bits | b.kind_bit()));
         self.sync_invariants();

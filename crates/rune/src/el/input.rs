@@ -185,7 +185,13 @@ impl El {
         }
         self
     }
-    /// Called after a focused field's text changes, with the updated model available.
+    /// Called after an edit in a focused field changes its text, marks or blocks, with the updated
+    /// model available: typing, ⌘B, ⌘I or ⌘U, paste, undo and redo, and the keys that change
+    /// blocks (Tab or Shift+Tab indent, Backspace at the start of a list item, heading, quote or
+    /// code line, Return on an empty list item, quote or code line). A caret or selection move
+    /// alone doesn't call it.
+    /// An app's own `toggle_mark`, `toggle_block` or `set_block` call (a toolbar button, an
+    /// `on_input_key` shortcut) doesn't call it either; the app saves that change itself.
     pub fn on_input_change<S: 'static>(mut self, f: impl Fn(&mut S, &mut Tx) + 'static) -> Self {
         if let Some(input) = self.cold.get_mut_if_some().and_then(|c| c.input.as_deref_mut()) {
             input.change = Some(Rc::new(move |s, tx| f(downcast::<S>(s), tx)));

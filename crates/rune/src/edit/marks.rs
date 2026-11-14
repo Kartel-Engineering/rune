@@ -22,6 +22,20 @@ impl TextEdit {
             self.blocks.truncate(line_count);
         }
         if let Some(bits) = self.allowed_blocks {
+            // A heading this field can't hold keeps its emphasis, as a bold paragraph.
+            if bits & Block::Heading(1).kind_bit() == 0
+                && self.blocks.iter().any(|b| matches!(b, Block::Heading(_)))
+            {
+                for p in self.paragraphs() {
+                    if matches!(p.block, Block::Heading(_)) {
+                        self.marks.push(MarkRange {
+                            start: p.range.start,
+                            end: p.range.end,
+                            mark: Mark::Bold,
+                        });
+                    }
+                }
+            }
             for b in &mut self.blocks {
                 if bits & b.kind_bit() == 0 {
                     *b = Block::Paragraph;
@@ -438,7 +452,7 @@ impl TextEdit {
         if self.secure || self.is_single_line() || !self.allows_block(block) {
             return;
         }
-        let block = block.with_level(block.list_level().unwrap_or(0));
+        let block = block.clamped();
         self.sync_invariants();
         self.break_history_group();
         let before = self.snapshot();
@@ -462,6 +476,7 @@ impl TextEdit {
         if self.secure || self.is_single_line() || !self.allows_block(block) {
             return;
         }
+        let block = block.clamped();
         self.sync_invariants();
         let (first, last) = self.selected_line_range();
         let all_match = (first..=last).all(|i| {

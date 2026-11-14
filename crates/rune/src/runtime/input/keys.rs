@@ -186,7 +186,20 @@ impl<S: 'static> Runtime<S> {
             if secure && !edit.is_secure() { edit.set_secure(true); }
             if let Some(rev) = revealed_override { edit.set_revealed(rev); }
         }
-        let before = change.as_ref().map(|_| zeroize::Zeroizing::new(access(states!(self)).text.clone()));
+        // What `on_input_change` watches: the text, its marks and its blocks, so a format-only
+        // change (⌘B, Tab indent, Backspace at a list item's start, undo of these) is saved
+        // like typing.
+        let before = change.as_ref().map(|_| {
+            let e = access(states!(self));
+            // Fit marks and blocks to a `text` the app wrote itself first, so a key that changes
+            // nothing isn't taken for a change.
+            e.sync_invariants();
+            (
+                zeroize::Zeroizing::new(e.text.clone()),
+                e.marks().to_vec(),
+                e.blocks().to_vec(),
+            )
+        });
         let mut out = f(states!(self), &access, tx);
         // Submit and Escape's blur act once per press; held keys still type, move and delete.
         if tx.key_repeat { out.submit = false; out.blur = false; }
@@ -194,7 +207,10 @@ impl<S: 'static> Runtime<S> {
         tx.commit = tx.commit.snap(!animate_layout);
         self.caret_follow = true;
         if let Some(change) = change
-            && before.as_ref().map(|s| s.as_str()) != Some(access(states!(self)).text.as_str())
+            && before.as_ref().is_some_and(|(text, marks, blocks)| {
+                let e = access(states!(self));
+                text.as_str() != e.text || marks != e.marks() || blocks != e.blocks()
+            })
         {
             change(states!(self), tx);
             access(states!(self)).mark_edited();

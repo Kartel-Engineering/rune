@@ -5,7 +5,8 @@
 //!   `<a href="...">`, `<code>`, and CSS `style` attributes (`font-weight`, `font-style`,
 //!   `text-decoration`, `text-decoration-line`), and `<span data-pill="id">` for
 //!   [`Mark::Pill`].
-//! - Block: `<p>`, `<div>`, `<br>`, `<ul>`, `<ol>`, `<li>`, `<blockquote>`, `<pre>`.
+//! - Block: `<p>`, `<div>`, `<br>`, `<ul>`, `<ol>`, `<li>`, `<blockquote>`, `<pre>`, and
+//!   `<h1>`…`<h6>` as [`Block::Heading`].
 //! - Stripped with content: `<script>`, `<style>`, `<head>`.
 //! - Unknown tags drop their wrapper and keep their text. Nothing is executed, and dangerous
 //!   link schemes (`javascript:`, `vbscript:`, `data:`) are rejected.
@@ -484,7 +485,13 @@ pub(crate) fn parse_html(html: &str) -> TextEdit {
                         );
                     }
                     "p" | "div" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
-                        let blk = current_default_block(&list_stack, in_pre, in_quote, in_li);
+                        let mut blk = current_default_block(&list_stack, in_pre, in_quote, in_li);
+                        // A heading outside a list, quote or code block is a heading line.
+                        if blk == Block::Paragraph
+                            && let Some(level) = tag.strip_prefix('h').and_then(|n| n.parse().ok())
+                        {
+                            blk = Block::Heading(level);
+                        }
                         start_new_paragraph(
                             &mut text,
                             &mut blocks,
@@ -503,7 +510,11 @@ pub(crate) fn parse_html(html: &str) -> TextEdit {
                 let mut to_add = Vec::new();
                 let mut to_suppress = Vec::new();
                 match tag.as_str() {
-                    "b" | "strong" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => to_add.push(Mark::Bold),
+                    "b" | "strong" => to_add.push(Mark::Bold),
+                    // A heading in a list item or quote can't be a heading line, so it stays bold.
+                    "h1" | "h2" | "h3" | "h4" | "h5" | "h6" if in_li > 0 || in_quote > 0 => {
+                        to_add.push(Mark::Bold)
+                    }
                     "i" | "em" => to_add.push(Mark::Italic),
                     "u" | "ins" => to_add.push(Mark::Underline),
                     "s" | "del" | "strike" => to_add.push(Mark::Strike),

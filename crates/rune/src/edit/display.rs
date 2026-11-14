@@ -134,35 +134,37 @@ impl TextEdit {
             }
         }
 
-        // Compute display blocks per `\n`-separated line of `display().0`, and add `mono: true`
-        // spans for any `Block::Code` lines.
+        // Compute display blocks per `\n`-separated line of `display().0`, and add a `mono: true`
+        // span for each `Block::Code` line and a bold, larger one for each `Block::Heading` line.
         let (disp_text, _) = self.display();
         let display_blocks = self.display_blocks(&disp_text);
         let mut line_start = 0usize;
-        let mut line_idx = 0usize;
-        for (i, b) in disp_text.bytes().enumerate() {
-            if b == b'\n' {
-                if display_blocks.get(line_idx) == Some(&Block::Code) && line_start < i {
-                    spans.push(Span {
-                        start: line_start as u32,
-                        end: i as u32,
-                        mono: true,
-                        color: style.code_fg,
-                        ..Span::default()
-                    });
-                }
-                line_start = i + 1;
-                line_idx += 1;
+        for (line_idx, line) in disp_text.split('\n').enumerate() {
+            let (start, end) = (line_start as u32, (line_start + line.len()) as u32);
+            line_start += line.len() + 1;
+            match display_blocks.get(line_idx) {
+                _ if start == end => {}
+                Some(Block::Code) => spans.push(Span {
+                    start,
+                    end,
+                    mono: true,
+                    color: style.code_fg,
+                    ..Span::default()
+                }),
+                Some(&Block::Heading(level)) => spans.push(Span {
+                    start,
+                    end,
+                    weight: Some((base_style.weight + 250.0).clamp(600.0, 900.0)),
+                    size: match level {
+                        1 => Some(base_style.size * 1.6),
+                        2 => Some(base_style.size * 1.3),
+                        3 => Some(base_style.size * 1.1),
+                        _ => None,
+                    },
+                    ..Span::default()
+                }),
+                _ => {}
             }
-        }
-        if display_blocks.get(line_idx) == Some(&Block::Code) && line_start < disp_text.len() {
-            spans.push(Span {
-                start: line_start as u32,
-                end: disp_text.len() as u32,
-                mono: true,
-                color: style.code_fg,
-                ..Span::default()
-            });
         }
 
         (spans, strikes, links, display_blocks)

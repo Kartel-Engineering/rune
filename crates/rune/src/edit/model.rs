@@ -7,6 +7,9 @@ use crate::color::{oklch, oklcha, Color};
 /// Maximum nesting level (`0..=MAX_LIST_LEVEL`) for [`Block::Bullet`] and [`Block::Numbered`].
 pub const MAX_LIST_LEVEL: u8 = 3;
 
+/// The deepest [`Block::Heading`] level, as HTML's `<h6>`.
+pub(crate) const MAX_HEADING_LEVEL: u8 = 6;
+
 /// An inline formatting mark stored alongside [`TextEdit::text`]. More marks may come, so a
 /// `match` needs a `_` arm.
 #[non_exhaustive]
@@ -105,6 +108,10 @@ pub enum Block {
     Quote,
     /// Monospace code block line with a background fill; inline marks do not apply.
     Code,
+    /// Heading line at level `1..=6` (`<h1>`…`<h6>`), drawn bold and larger; an app's
+    /// `.decorations()` override that look. An empty heading line still draws at body size and
+    /// line height, until it holds text.
+    Heading(u8),
 }
 
 impl Block {
@@ -128,7 +135,17 @@ impl Block {
         }
     }
 
-    /// Whether `self` and `other` share the same block kind (ignoring list nesting level).
+    /// `self` with a list level in `0..=MAX_LIST_LEVEL` and a heading level in `1..=6`.
+    pub(crate) fn clamped(self) -> Self {
+        match self {
+            Block::Heading(l) => Block::Heading(l.clamp(1, MAX_HEADING_LEVEL)),
+            other => other.with_level(other.list_level().unwrap_or(0)),
+        }
+    }
+
+    /// Whether `self` and `other` share the same block kind (ignoring list nesting level; a
+    /// heading matches only a heading of the same level, so toggling `Heading(2)` on an H1 makes
+    /// it an H2).
     pub fn same_kind(self, other: Block) -> bool {
         matches!(
             (self, other),
@@ -137,7 +154,7 @@ impl Block {
                 | (Block::Numbered(_), Block::Numbered(_))
                 | (Block::Quote, Block::Quote)
                 | (Block::Code, Block::Code)
-        )
+        ) || matches!((self, other), (Block::Heading(a), Block::Heading(b)) if a == b)
     }
 
     /// This block's kind as one bit, for [`TextEdit::allow_blocks`].
@@ -148,6 +165,7 @@ impl Block {
             Block::Numbered(_) => 2,
             Block::Quote => 3,
             Block::Code => 4,
+            Block::Heading(_) => 5,
         }
     }
 
@@ -155,7 +173,7 @@ impl Block {
     pub(crate) fn indent_pt(self, font_size: f32) -> f32 {
         let unit = (font_size * 1.45).round().max(18.0);
         match self {
-            Block::Paragraph => 0.0,
+            Block::Paragraph | Block::Heading(_) => 0.0,
             Block::Bullet(l) | Block::Numbered(l) => unit * (l.min(MAX_LIST_LEVEL) as f32 + 1.0),
             Block::Quote => (font_size * 1.1).round().max(14.0),
             Block::Code => (font_size * 0.75).round().max(10.0),
