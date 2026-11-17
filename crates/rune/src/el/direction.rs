@@ -191,6 +191,28 @@ fn first_strong_char(text: &str, across: bool) -> Option<Direction> {
     None
 }
 
+/// Whether `text` holds a right-to-left character (Hebrew, Arabic, an RLM, RLE, RLO or RLI).
+pub(crate) fn has_rtl(text: &str) -> bool {
+    use icu_properties::{CodePointMapData, props::BidiClass};
+    let classes = CodePointMapData::<BidiClass>::new();
+    // Nothing below U+0590 is right to left, and its UTF-8 lead bytes are all under 0xD6: an
+    // English note scans as bytes.
+    let Some(at) = text.bytes().position(|b| b >= 0xd6) else {
+        return false;
+    };
+    text[at..].chars().filter(|&c| c >= '\u{590}').any(|c| {
+        matches!(
+            classes.get(c),
+            BidiClass::RightToLeft
+                | BidiClass::ArabicLetter
+                | BidiClass::ArabicNumber
+                | BidiClass::RightToLeftEmbedding
+                | BidiClass::RightToLeftOverride
+                | BidiClass::RightToLeftIsolate
+        )
+    })
+}
+
 /// The first strong direction in `el`'s text, then its children's in order, skipping children
 /// that set their own direction.
 fn first_strong(el: &El) -> Option<Direction> {

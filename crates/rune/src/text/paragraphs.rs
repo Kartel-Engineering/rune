@@ -195,9 +195,11 @@ fn spans_in<'s>(spans: &'s [Span], a: usize, b: usize, isolates: &'s [(u32, u32)
 
 /// `pills` inside content bytes `a..b`, each its label's shaped bytes.
 fn pills_in<'s>(pills: &'s [PillChip], a: usize, b: usize, isolates: &'s [(u32, u32)]) -> impl Iterator<Item = PillChip> + 's {
+    // A paragraph holding a pill isolates it, unless its field isn't by paragraph.
+    let mark = if isolates.is_empty() { 0 } else { ISOLATE };
     pills.iter().filter(move |p| inside(p, a, b)).map(move |p| PillChip {
-        start: (shaped(isolates, p.start as usize - a) + ISOLATE) as u32,
-        end: (shaped(isolates, p.end as usize - a) - ISOLATE) as u32,
+        start: (shaped(isolates, p.start as usize - a) + mark) as u32,
+        end: (shaped(isolates, p.end as usize - a) - mark) as u32,
         ..p.clone()
     })
 }
@@ -307,12 +309,26 @@ impl<'a> TextFlow<'a> {
         }
     }
 
-    /// The piece at device row `y`, the first or last past either end.
+    /// The piece at device row `y`, the first or last past either end; in the space
+    /// [`El::block_space_above`](crate::El::block_space_above) put between two, the nearer.
     fn piece_at_y(self, y: f32) -> Piece<'a> {
         match self {
             TextFlow::Single(l) => Piece::whole(l),
             TextFlow::Paragraphs(p) => {
-                let k = p.paragraphs.partition_point(|q| q.y + q.height <= y).min(p.paragraphs.len() - 1);
+                let mut k = p
+                    .paragraphs
+                    .partition_point(|q| q.y + q.height <= y)
+                    .min(p.paragraphs.len() - 1);
+                // A rounding seam under a pixel is no space: only a block space picks the nearer.
+                let next = p.paragraphs[k].y;
+                if let Some(bottom) = k
+                    .checked_sub(1)
+                    .map(|j| p.paragraphs[j].y + p.paragraphs[j].height)
+                    && next - bottom >= 1.0
+                    && y - bottom < next - y
+                {
+                    k -= 1;
+                }
                 Piece::of_paragraph(k, &p.paragraphs[k])
             }
         }
@@ -488,7 +504,16 @@ impl TextSystem {
         align: Alignment,
         prev: Option<&TextLayout>,
     ) -> TextLayout {
-        if !spec.by_paragraph(input) {
+        // A field spaced by block whose spaces all come to 0 (one paragraph, say) lays out as
+        // one layout, exactly as with no space set.
+        let stacked = spec.stacked(input);
+        let spaces: Vec<f32> = match spec.cold.block_space_above {
+            Some(_) if stacked => (0..spec.content.split('\n').count())
+                .map(|k| space_above(spec, k, scale))
+                .collect(),
+            _ => Vec::new(),
+        };
+        if !stacked || !spec.by_paragraph(input) && spaces.iter().all(|&s| s == 0.0) {
             return TextLayout::Single(self.layout_for_spec(spec, scale, max_width, align));
         }
         // One paragraph and no pills, as most drafts are: one layout in its own direction.
@@ -503,7 +528,12 @@ impl TextSystem {
         let whole = if spec.plaintext_flow() == Flow::Rtl { whole ^ 0x3c6e_f372_fe94_f82b } else { whole };
         let blocks = &spec.cold.blocks;
         let indented = blocks.iter().any(|&b| b != Block::Paragraph).then_some(blocks.as_slice());
-        let key = hash::break_key(whole ^ PARAGRAPHS, max_width, align, indented);
+        let mut key = hash::break_key(whole ^ PARAGRAPHS, max_width, align, indented);
+        if !spaces.is_empty() {
+            let mut h = hash::KeyHasher::default();
+            (key, spaces.iter().map(|s| s.to_bits()).collect::<Vec<_>>()).hash(&mut h);
+            key = h.finish();
+        }
         let g = self.generation;
         if let Some(e) = self.paragraphs.get_mut(&key) {
             e.used = g;
@@ -542,13 +572,16 @@ impl TextSystem {
         };
         let mut found: Vec<(usize, usize, Flow, u64, Box<[(u32, u32)]>)> = Vec::new();
         let mut start = 0;
+        // A field spaced by block but not by paragraph reads one way, as its one layout would.
+        let one = spec.one_flow();
         // A paragraph with no strong character reads the way the one before it does.
         let mut last = spec.plaintext_flow();
         for (k, words) in content.split('\n').enumerate() {
             let (a, b) = (start, start + words.len());
             start = b + 1;
-            let isolates: Box<[(u32, u32)]> = spec.cold.pills.iter().filter(|p| inside(p, a, b)).map(|p| (p.start - a as u32, p.end - a as u32)).collect();
-            let flow = flow_of(words, &isolates).unwrap_or(last);
+            // Pills read as `dir="auto"` spans only by paragraph; the one layout doesn't isolate them.
+            let isolates: Box<[(u32, u32)]> = if one.is_some() { Box::default() } else { spec.cold.pills.iter().filter(|p| inside(p, a, b)).map(|p| (p.start - a as u32, p.end - a as u32)).collect() };
+            let flow = one.or_else(|| flow_of(words, &isolates)).unwrap_or(last);
             last = flow;
             let mut h = hash::KeyHasher::default();
             (words, style_key, flow == Flow::Rtl, spec.cold.blocks.get(k).copied().unwrap_or(Block::Paragraph)).hash(&mut h);
@@ -597,6 +630,7 @@ impl TextSystem {
             };
             let height = if a == b { layout.height().max(line) } else { layout.height() };
             (width, full_width) = (width.max(layout.width()), full_width.max(layout.full_width()));
+            y += f64::from(space_above(spec, k, scale));
             paragraphs.push(Paragraph { start: a, end: b, y: y.round() as f32, height, flow, key, isolates, layout });
             y += f64::from(height);
         }
@@ -604,6 +638,24 @@ impl TextSystem {
         let newline = 0.25 * (asc + desc.abs()) * style.size * scale;
         (ParagraphLayout { paragraphs, width, full_width, height: y as f32, max_width, align, whole, newline }, fresh)
     }
+}
+
+/// The device px [`El::block_space_above`](crate::El::block_space_above) puts above paragraph
+/// `k`: none above the first, a line a soft break started, or a quote or code line under one of
+/// its own.
+fn space_above(spec: &TextSpec, k: usize, scale: f32) -> f32 {
+    let (Some(space), Some(j)) = (spec.cold.block_space_above, k.checked_sub(1)) else {
+        return 0.0;
+    };
+    let blocks = &spec.cold.blocks;
+    let block = blocks.get(k).copied().unwrap_or(Block::Paragraph);
+    let joined = matches!(block, Block::Quote | Block::Code) && blocks.get(j) == Some(&block);
+    if joined || spec.cold.soft_breaks.binary_search(&(k as u32)).is_ok() {
+        return 0.0;
+    }
+    // A negative or NaN space is none; one over 10,000 points, infinity too, is 10,000.
+    let px = (space(block).clamp(0.0, 10_000.0) * scale).round();
+    if px.is_finite() { px } else { 0.0 }
 }
 
 /// A paragraph's direction: its first strong character's outside its pills, or None with none.

@@ -153,6 +153,27 @@ impl El {
         }
         self
     }
+    /// Extra space in points above each paragraph of a multi-line [`text_input`], by its
+    /// [`Block`](crate::Block), as CSS's `margin-top` on a `contenteditable`'s blocks: 30 above
+    /// headings sets each section apart. The field's first paragraph gets none, a line a
+    /// Shift+Return break started none, and a quote or code line under one of its own kind none,
+    /// so a run of them stays one box. The caret, a click, Up and Down, a selection and the
+    /// field's height follow; a click in the space lands on the nearer line, and a selection
+    /// leaves the space bare. A negative or NaN space is none, and one over 10,000 points is
+    /// 10,000. A field with right-to-left text in it (a Hebrew or Arabic letter anywhere), or
+    /// right to left by its element's direction, gets no space and lays out as before, unless
+    /// it's [`El::dir_by_paragraph`].
+    /// Unset, each block sits on the one above, as before.
+    ///
+    /// ```ignore
+    /// text_input(&s.draft, body).block_space_above(|b| if let Block::Heading(1..=3) = b { 30.0 } else { 0.0 })
+    /// ```
+    pub fn block_space_above(mut self, space: fn(crate::edit::Block) -> f32) -> Self {
+        if let Some(t) = &mut self.text {
+            t.cold.block_space_above = Some(space);
+        }
+        self
+    }
     /// The chip colour of each [`Mark::Pill`](crate::Mark::Pill) in a [`text_input`], and its
     /// label and icon colour (`None`: the text's). The chip defaults to the rich style's link
     /// colour at 20% opacity.

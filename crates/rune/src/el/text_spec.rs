@@ -131,6 +131,8 @@ pub(crate) struct TextCold {
     pub(crate) pill_colors: Option<(Color, Option<Color>)>,
     /// Visual palette for rich block and inline decorations; the default's when unset.
     pub(crate) rich_style: Option<crate::edit::RichStyle>,
+    /// See [`El::block_space_above`](crate::El::block_space_above).
+    pub(crate) block_space_above: Option<fn(crate::edit::Block) -> f32>,
     pub(crate) secure_revealed: bool,
 }
 
@@ -156,6 +158,7 @@ impl Empty for TextCold {
         isolates: Vec::new(),
         pill_colors: None,
         rich_style: None,
+        block_space_above: None,
         secure_revealed: false,
     };
 }
@@ -276,8 +279,36 @@ impl TextSpec {
     /// ([`crate::text::ParagraphLayout`]): a wrapped, uncut field's by-paragraph text. Others
     /// stay one layout (a static text splits into one text per paragraph instead).
     pub(crate) fn by_paragraph(&self, input: bool) -> bool {
-        matches!(self.dir, TextDir::Plaintext(_)) && input && self.wrap && !self.redacted && !self.truncate && !self.truncate_fade
+        matches!(self.dir, TextDir::Plaintext(_)) && self.stacked(input)
+    }
+
+    /// Whether a field lays out as a stack of paragraph layouts: by paragraph, or with
+    /// [`El::block_space_above`](crate::El::block_space_above) set on a left-to-right field. A
+    /// wrapped, uncut field only.
+    pub(crate) fn stacked(&self, input: bool) -> bool {
+        // ponytail: a field with any right-to-left text keeps its one layout and gets no block
+        // space, because the stack resolves bidi per paragraph and its paragraph-end caret and
+        // `range_boxes` differ from the one layout's around a right-to-left run (a caret a row
+        // up, a selection that loses a line). Fix those in `text/paragraphs.rs`, then drop this
+        // check.
+        let spaced = self.cold.block_space_above.is_some()
+            && self.one_flow() == Some(crate::el::Flow::Ltr)
+            && !crate::el::direction::has_rtl(&self.content);
+        (matches!(self.dir, TextDir::Plaintext(_)) || spaced) && input && self.wrap && !self.redacted && !self.truncate && !self.truncate_fade
             && self.max_lines == 0 && self.cold.live.is_none() && self.cold.advance_in.is_none()
+    }
+
+    /// The one direction all its paragraphs take when it isn't by paragraph: its element's, or
+    /// the whole text's first strong character's, as the one layout's `BaseDirection::Auto`.
+    pub(crate) fn one_flow(&self) -> Option<crate::el::Flow> {
+        match self.dir {
+            TextDir::Plaintext(_) => None,
+            TextDir::Fixed(flow) => Some(flow),
+            TextDir::Auto => match self.content.split('\n').find_map(crate::Direction::of) {
+                Some(crate::Direction::Rtl) => Some(crate::el::Flow::Rtl),
+                _ => Some(crate::el::Flow::Ltr),
+            },
+        }
     }
 
     /// Zeroizes the shown string and shows `content` instead.
