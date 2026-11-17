@@ -186,7 +186,7 @@ impl<S: 'static> Runtime<S> {
                     || (!self.reduced_motion && self.loops.get(&n.id).is_some_and(|l| l.active(store.node_time(n.id))))
                     || self.grows.get(&n.id).is_some_and(|g| g.moving())
                     || self.scrolls.get(&n.id).is_some_and(|st| st.slack.height() > 0.0)
-                    || self.reveals.get(&n.id).is_some_and(|r| !r.words.is_empty())
+                    || self.reveals.get(&n.id).is_some_and(|r| r.fading())
                     || self.subtree_exiting(i)
                     || (!self.flights.is_empty() && self.flights.iter().any(|f| f.departs(&n.path, n.key.as_deref()) || f.lands(&n.path, n.key.as_deref())))
                     || n.vis.effect.is_some()
@@ -206,7 +206,7 @@ impl<S: 'static> Runtime<S> {
                 // Hover, press and link paint land without a commit (an instant track or a
                 // pointer move inside one text), so hash what this frame samples.
                 let links = n.text.as_ref().is_some_and(|t| !t.cold.links.is_empty());
-                if n.vis.hover().a > 0.0 || n.vis_flags.hover_group() || n.vis.press().a > 0.0 || n.handlers.get().is_some_and(|h| h.press_scale.is_some()) || links {
+                if n.vis.hover().a > 0.0 || n.vis_flags.hover_group() || n.vis.tracks_press() || n.handlers.get().is_some_and(|h| h.press_scale.is_some()) || links {
                     let mut ph = rune_motion::Fx::default();
                     ph.write_u64(n.id.0);
                     for prop in [P_HOVER, P_PRESS, P_PRESS_SCALE] {

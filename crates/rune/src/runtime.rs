@@ -26,7 +26,7 @@ use rune_taffy::prelude::*;
 use crate::color::{Color, over, srgb_encode};
 use crate::edit::{EditOutcome, Ime, KeyEvent};
 use crate::el::{Align, Commit, Drag, El, GrowthSpec, InputSpec, MotionSource, Phase, PointerEvent, ScrollSpec, Shell, TextSpec, Tx, Visual};
-use crate::growth::{GrowTrack, SUBSTEP};
+use crate::growth::GrowTrack;
 // Half-open, like overlays, NSPointInRect and PtInRect: a shared edge belongs to one side.
 use crate::overlay::options::contains;
 use crate::flight::{TextFlight, transformed};
@@ -175,6 +175,9 @@ pub use motion_elements::MotionElement;
 mod live_latch;
 #[path = "runtime/motion/loop_clock.rs"]
 mod loop_clock;
+#[path = "runtime/motion/reveal_phase.rs"]
+mod reveal_phase;
+use reveal_phase::{Arrival, RevealChain, RevealEffect, RevealEvent, RevealPhase};
 #[path = "runtime/motion/rewind.rs"]
 mod rewind_record;
 #[path = "runtime/scroll/drawn.rs"]
@@ -189,6 +192,11 @@ use scroll_mode::ScrollMode;
 mod scroll_watch;
 #[doc(hidden)]
 pub use scroll_watch::scroll_watch_state;
+#[path = "runtime/input/autoscroll.rs"]
+mod autoscroll;
+#[cfg(target_os = "linux")]
+#[path = "runtime/input/primary_selection.rs"]
+mod primary_selection;
 #[path = "runtime/input/gesture.rs"]
 mod gesture_dispatch;
 #[path = "runtime/input/key_releases.rs"]
@@ -252,6 +260,8 @@ mod shadow_paint;
 mod shape_paint;
 use shape_paint::push_shape;
 use props::*;
+#[cfg(not(target_os = "windows"))]
+pub(crate) use scroll_x::LINE_POINTS;
 pub(crate) use scroll_x::{SHIFT_TURNS_WHEEL, wheel_delta};
 pub(crate) use scroll_offset::ScrollRequest;
 pub(crate) use reveal::ScrollReveal;
@@ -259,6 +269,9 @@ pub use selectable::{SelectedText, SelectionChange, TextSelection};
 #[cfg(test)]
 #[path = "runtime/timer_wake_tests.rs"]
 mod timer_wake_tests;
+#[cfg(test)]
+#[path = "runtime/grid_tests.rs"]
+mod grid_tests;
 #[cfg(test)]
 #[path = "runtime/truncate_tests.rs"]
 mod truncate_tests;
@@ -289,6 +302,9 @@ mod live_check_tests;
 #[cfg(test)]
 #[path = "runtime/virtual_store_tests.rs"]
 mod virtual_store_tests;
+#[cfg(test)]
+#[path = "runtime/virtual/fill_resume_tests.rs"]
+mod fill_resume_tests;
 #[path = "runtime/selection/select_all.rs"]
 mod select_all;
 #[cfg(test)]
@@ -318,6 +334,7 @@ pub(crate) mod web_export;
 #[path = "runtime/commit/text_layout.rs"]
 mod text_layout;
 use text_layout::*;
+pub(crate) use text_layout::text_width;
 #[path = "runtime/commit/flatten.rs"]
 mod flatten;
 use flatten::*;
@@ -373,10 +390,16 @@ mod paint_helpers;
 use paint_helpers::*;
 #[path = "runtime/paint/content.rs"]
 mod paint_content;
+#[path = "runtime/paint/grid.rs"]
+mod grid_paint;
 #[path = "runtime/input/hit.rs"]
 mod hit;
 #[path = "runtime/paint/build.rs"]
 mod build;
+#[path = "runtime/paint/keep.rs"]
+mod paint_keep;
+#[path = "runtime/text_fill.rs"]
+mod text_fill;
 #[path = "runtime/input/keys.rs"]
 mod keys;
 #[path = "runtime/input/pointer.rs"]
@@ -399,10 +422,10 @@ pub(crate) use commit_why::CommitWhy;
 #[cfg(debug_assertions)]
 pub(crate) use layout_read::window_read_key;
 pub(crate) use types::{AnimSource, Node};
-use types::{AxisScroll, GlideTo, Inh, NodeCold, RevealState, RowLayout, ScaleMotion, ScrollState, Stack, WidthHold};
+use types::{AxisScroll, GlideTo, Inh, NodeCold, RowLayout, ScaleMotion, ScrollState, Stack, WidthHold};
 #[path = "runtime/motion/tracks.rs"]
 mod tracks;
-use tracks::{SCROLL_DECAY, mark_ancestors, scroll_offsets, word_starts};
+use tracks::{SCROLL_DECAY, mark_ancestors, scroll_offsets};
 mod commit;
 use commit::{Measured, Measurement, Pass, unwrapped_width};
 
@@ -445,6 +468,10 @@ pub struct Runtime<S: 'static> {
     system_reduced_motion: bool,
     titlebar_inset: f32,
     system_accent: crate::SystemAccent,
+    /// What [`Cx::system_contrast`] reports.
+    pub(crate) system_contrast: Option<crate::SystemContrast>,
+    /// What [`Cx::system_increased_contrast`] reports.
+    pub(crate) system_increased_contrast: bool,
     scroll_bars: system_settings::ScrollBarHost,
     pub time_scale: f32,
     /// The last view's `Cx::foreground` and `Cx::focus_ring`, for rows built after it and the
@@ -488,6 +515,13 @@ pub struct Runtime<S: 'static> {
     press: capture::Press,
     /// The secondary button's press, held beside it.
     secondary: capture::Secondary,
+    /// The middle or secondary button's pressed look (`capture::Tint`).
+    tint: capture::Tint,
+    /// Linux's primary selection (`runtime/input/primary_selection.rs`).
+    #[cfg(target_os = "linux")]
+    pub(crate) primary: primary_selection::PrimarySelection,
+    /// The middle button's autoscroll (`runtime/input/autoscroll.rs`).
+    autoscroll: autoscroll::Autoscroll,
     drag_data: f32,
     pub instances: Vec<Instance>,
     /// Per instance, the `El::mark` of its nearest marked node (0 for none). Filled only while
@@ -503,6 +537,17 @@ pub struct Runtime<S: 'static> {
     hits: Vec<(NodeId, [f32; 4])>,
     overlay_hits: Vec<[f32; 4]>,
     glyph_scratch: Vec<GlyphQuad>,
+    /// What the last paint painted, for subtrees that would paint it again (`paint_keep`).
+    paint_keep: paint_keep::PaintKeep,
+    /// The device rows of each field with waiting paragraphs its last paint showed (`text_fill`).
+    text_rows: HashMap<NodeId, (f32, f32)>,
+    /// Each still text's quads as it drew them, by node and layout id, and the paint they were
+    /// last used in (`paint_content`): a frame that draws it the same copies them.
+    text_quads: HashMap<(NodeId, crate::text::LayoutId), (crate::el::grid::DrawnRow, u64)>,
+    quads_frame: u64,
+    /// Still texts that copied their quads, for tests.
+    #[cfg(test)]
+    quads_copied: u64,
     deco_scratch: Vec<PaintedDeco>,
     inh_scratch: Vec<Inh>,
     /// `motion_elements`' per-node scratch, kept so a frame doesn't allocate.
@@ -597,9 +642,12 @@ pub struct Runtime<S: 'static> {
     pub(crate) virtual_culled: HashSet<String>,
     /// Fresh view accessors for focused text fields omitted by virtualization.
     virtual_inputs: HashMap<String, Box<InputSpec>>,
-    reveals: HashMap<NodeId, RevealState>,
-    /// When the newest streamed word of any text starts fading: the next text's words follow it.
-    reveal_chain: f64,
+    reveals: HashMap<NodeId, RevealPhase>,
+    /// The reveal states `reveals` keeps for texts that have left the tree, newest first, at
+    /// most `prune::REVEALS_KEPT` of them (see `prune_exited`).
+    reveals_kept: Vec<NodeId>,
+    /// The newest streamed word of any text, which the next text's words queue behind.
+    reveal_chain: RevealChain,
     flights: Vec<TextFlight>,
     /// Per node index this frame: presented row top dy, row height override, and bottom feather mask.
     row_dy: Vec<f32>,
@@ -611,7 +659,6 @@ pub struct Runtime<S: 'static> {
     fold_headers: HashMap<NodeId, String>,
     /// What this frame's commits held at their landing width (`El::hold_landing_width`).
     landing_holds: landing_hold::LandingHolds,
-    grow_acc: f32,
     caught_up: f32,
     slack_dt: f32,
     /// What has focus, how it shows and where Tab starts (`runtime/input/focus_machine.rs`).
@@ -636,6 +683,8 @@ pub struct Runtime<S: 'static> {
     focus_before_commit: Option<String>,
     /// `Tx::focus`: the key the next commit focuses, and whether its ring shows.
     focus_request: Option<(String, bool, crate::el::FocusAsk)>,
+    /// `Tx::focus_when_shown` still waiting for its element: the key and whether its ring shows.
+    focus_owed: Option<(String, bool)>,
     /// This commit's focus is a `Tx::return_focus` hand-back, which a modal opening in it
     /// doesn't take as where focus was.
     focus_returned: bool,
@@ -670,6 +719,8 @@ pub struct Runtime<S: 'static> {
     /// Files dragged over the window from another app (`drop_dispatch`).
     file_drag: drop_dispatch::FileDrag,
     pub ime_area: Option<[f32; 4]>,
+    /// The `El::ime_cursor` that has the input method asks for Option as Alt (`El::ime_option_as_alt`).
+    pub(crate) ime_option_as_alt: bool,
     /// The focused field's caret (path, window rect) the next view sees through `Cx::caret`.
     caret: Option<(String, [f32; 4])>,
     /// The last view read the caret, so it re-runs when the caret moves.
@@ -871,6 +922,8 @@ impl<S: 'static> Runtime<S> {
             system_reduced_motion: false,
             titlebar_inset: 0.0,
             system_accent: crate::SystemAccent::DEFAULT,
+            system_contrast: None,
+            system_increased_contrast: false,
             scroll_bars: Default::default(),
             time_scale: 1.0,
             defaults: Default::default(),
@@ -901,6 +954,10 @@ impl<S: 'static> Runtime<S> {
             pointer: None,
             press: Default::default(),
             secondary: Default::default(),
+            tint: Default::default(),
+            #[cfg(target_os = "linux")]
+            primary: Default::default(),
+            autoscroll: Default::default(),
             drag_data: 0.0,
             instances: Vec::new(),
             marks: Vec::new(),
@@ -911,6 +968,12 @@ impl<S: 'static> Runtime<S> {
             hits: Vec::new(),
             overlay_hits: Vec::new(),
             glyph_scratch: Vec::new(),
+            paint_keep: Default::default(),
+            text_rows: HashMap::default(),
+            text_quads: HashMap::default(),
+            quads_frame: 0,
+            #[cfg(test)]
+            quads_copied: 0,
             deco_scratch: Vec::new(),
             inh_scratch: Vec::new(),
             motion_scratch: Default::default(),
@@ -966,7 +1029,8 @@ impl<S: 'static> Runtime<S> {
             reuse: Default::default(),
             virtual_inputs: HashMap::default(),
             reveals: HashMap::default(),
-            reveal_chain: 0.0,
+            reveals_kept: Vec::new(),
+            reveal_chain: RevealChain::default(),
             flights: Vec::new(),
             launches: Default::default(),
             pixel_snap: Default::default(),
@@ -976,7 +1040,6 @@ impl<S: 'static> Runtime<S> {
             row_lifts: Vec::new(),
             fold_headers: HashMap::default(),
             landing_holds: Default::default(),
-            grow_acc: 0.0,
             caught_up: 0.0,
             slack_dt: 0.0,
             focus: Default::default(),
@@ -988,6 +1051,7 @@ impl<S: 'static> Runtime<S> {
             modal_focus: modal_focus::ModalFocus::Closed,
             focus_before_commit: None,
             focus_request: None,
+            focus_owed: None,
             focus_returned: false,
             unmounted_focused: Vec::new(),
             modal_scope: None,
@@ -1006,6 +1070,7 @@ impl<S: 'static> Runtime<S> {
             hover_hold: Default::default(),
             file_drag: Default::default(),
             ime_area: None,
+            ime_option_as_alt: false,
             caret: None,
             caret_watch: false,
             layout_seen: Default::default(),

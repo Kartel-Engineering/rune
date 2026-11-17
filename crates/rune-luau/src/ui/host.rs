@@ -171,9 +171,11 @@ impl NodeArgs {
         }
     }
 
-    /// Runs the script function in prop `name` when `el` is pressed.
+    /// Runs the script function in prop `name` when `el` is pressed; with `menuTrigger = true`, a
+    /// mouse runs it as the button goes down (`El::press_on_down`), as on a `ui` node.
     pub fn on_press(&self, el: El, name: &str) -> El {
-        self.on_press_with(el, name, Vec::new())
+        let el = self.on_press_with(el, name, Vec::new());
+        if self.flag("menuTrigger") && self.handler(name).is_some() { el.press_on_down() } else { el }
     }
 
     /// Runs the script function in prop `name` when `el` is pressed, with `fields` added to its
@@ -264,7 +266,7 @@ unsafe fn build_from(state: *mut ffi::lua_State, el: El, tables: [c_int; 2], arg
                 } {
                     let own = matches!(props::read(state, -2), Value::Str(k) if args.read().any(|u| u == k));
                     match props::key_atom(state, -2) {
-                        Ok(Atom::OnPress | Atom::OnHover) => {}
+                        Ok(Atom::OnPress | Atom::OnHover | Atom::OnMiddlePress) => {}
                         Ok(atom) if !own => p.decode_at(el, state, atom, -1, env, false)?,
                         _ => {}
                     }

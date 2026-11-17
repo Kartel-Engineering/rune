@@ -20,7 +20,8 @@ mod display;
 mod history;
 mod html;
 mod ime;
-pub use ime::Ime;
+pub use ime::{Clause, Ime};
+pub(crate) use ime::ImeText;
 mod input;
 mod keys;
 pub use keys::{Key, KeyEvent, KeySide, Modifier, Mods};
@@ -32,6 +33,9 @@ pub(crate) use secure::{MULTILINE_SECURE_MASK, Masking};
 use secure::LineMode;
 mod typing;
 use typing::Typing;
+mod direction_keys;
+use direction_keys::FieldDir;
+pub(crate) use direction_keys::{DirChord, step_dir_chord};
 pub(crate) use history::History;
 use history::{EditKind, EditedTag, Group};
 
@@ -72,6 +76,8 @@ pub struct TextEdit {
     /// a byte there has a place at the end of one run and at the start of the other. Arrows
     /// and presses set it; anything else puts it before the byte that follows.
     pub(crate) affinity: parley::Affinity,
+    /// The direction Ctrl+Left Shift or Ctrl+Right Shift set (`direction_keys`).
+    dir: FieldDir,
 }
 
 impl std::fmt::Debug for TextEdit {
@@ -116,13 +122,58 @@ impl std::hash::Hash for TextEdit {
         self.secure.hash(h);
         self.revealed.hash(h);
         self.is_single_line().hash(h);
+        self.dir.hash(h);
     }
 }
 
 impl Drop for TextEdit {
     fn drop(&mut self) {
-        self.text.zeroize();
+        wipe(&mut self.text);
         self.cancel_composition();
+    }
+}
+
+/// Overwrites every byte `s` holds, its spare capacity too, with zeros the compiler can't leave
+/// out (volatile writes and a fence, as `zeroize`), then empties it. Eight bytes a write, not
+/// one: a 1.7 MB draft's copy goes in a tenth of a millisecond, where a byte at a time was most
+/// of one on every frame a long draft's field was built.
+pub(crate) fn wipe(s: &mut String) {
+    // SAFETY: only zeros are written, inside the allocation (`capacity` bytes from its start),
+    // each at an address aligned for what's written there; the length is reset to 0 after.
+    unsafe {
+        let v = s.as_mut_vec();
+        let (p, cap) = (v.as_mut_ptr(), v.capacity());
+        let head = p.align_offset(8).min(cap);
+        let mut i = 0;
+        while i < head { std::ptr::write_volatile(p.add(i), 0u8); i += 1; }
+        while i + 8 <= cap { std::ptr::write_volatile(p.add(i).cast::<u64>(), 0); i += 8; }
+        while i < cap { std::ptr::write_volatile(p.add(i), 0u8); i += 1; }
+        v.set_len(0);
+    }
+    std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
+}
+
+/// Document text kept aside (an undo step's, a snapshot's): wiped when it goes, as the field's
+/// own text is.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct Wiped(pub(crate) String);
+
+impl std::ops::Deref for Wiped {
+    type Target = String;
+    fn deref(&self) -> &String {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for Wiped {
+    fn deref_mut(&mut self) -> &mut String {
+        &mut self.0
+    }
+}
+
+impl Drop for Wiped {
+    fn drop(&mut self) {
+        wipe(&mut self.0);
     }
 }
 
@@ -188,6 +239,7 @@ impl TextEdit {
             edited_tag: EditedTag::default(),
             column: Column::Free,
             affinity: parley::Affinity::Downstream,
+            dir: FieldDir::Natural,
         }
     }
 
@@ -411,6 +463,26 @@ impl TextEdit {
         self.composition.target()
     }
 
+    /// The composition's clauses, each a byte range of the preedit, the one being converted
+    /// marked (one clause over the whole preedit when the input method gives none). Empty when
+    /// not composing.
+    pub fn preedit_clauses(&self) -> Vec<Clause> {
+        self.composition.clauses()
+    }
+
+    /// The text around the selection for the platform's input method to read (reconversion,
+    /// document feed); none for a secret or mid-composition.
+    pub(crate) fn ime_text(&self) -> Option<ImeText> {
+        if self.secure || self.is_composing() { return None; }
+        let (a, b) = self.range();
+        let t = &self.text;
+        let mut start = t[..a].rfind('\n').map_or(0, |i| i + 1).max(a.saturating_sub(1024));
+        while !t.is_char_boundary(start) { start += 1; }
+        let mut end = t[b..].find('\n').map_or(t.len(), |i| b + i).min(b + 1024);
+        while !t.is_char_boundary(end) { end -= 1; }
+        Some(ImeText { text: t[start..end].to_owned(), start, selection: a - start..b - start })
+    }
+
     /// Ends the input method's composition without writing it, as an edit replacing the text
     /// under it does.
     pub fn cancel_composition(&mut self) {
@@ -425,10 +497,11 @@ impl TextEdit {
         if self.secure { self.cancel_composition(); return false; }
         let mut finished = false;
         for effect in ime::step(&mut self.composition, ime::Event::Finish) {
-            let ime::Effect::Commit(mut s) = effect;
-            self.commit_composed(&s);
-            s.zeroize();
-            finished = true;
+            if let ime::Effect::Commit(mut s) = effect {
+                self.commit_composed(&s);
+                s.zeroize();
+                finished = true;
+            }
         }
         finished
     }
@@ -440,7 +513,7 @@ impl TextEdit {
     /// Replace the whole draft and discard its history, preserving focus and password mode.
     pub fn replace_text(&mut self, text: impl Into<String>) {
         let text = text.into();
-        self.text.zeroize();
+        wipe(&mut self.text);
         let line_count = if self.secure { 0 } else { 1 + count_newlines(text.as_bytes()) };
         self.text = text;
         self.anchor = self.text.len();
@@ -657,8 +730,8 @@ impl TextEdit {
     /// fields fold CRLF to LF (and multi-line secure fields also drop control characters other
     /// than `\n` and `\t`). Sized up front so no partial copy of a secret is left behind by a
     /// reallocation.
-    fn sanitize(&self, s: &str) -> Zeroizing<String> {
-        let mut out = Zeroizing::new(String::with_capacity(s.len()));
+    fn sanitize(&self, s: &str) -> Wiped {
+        let mut out = Wiped(String::with_capacity(s.len()));
         if self.is_single_line() {
             out.extend(s.chars().filter(|c| !c.is_control() && !matches!(c, '\u{2028}' | '\u{2029}')));
         } else if self.secure {
@@ -674,6 +747,9 @@ impl TextEdit {
                     out.push(c);
                 }
             }
+        } else if !s.contains('\r') {
+            // Most pastes: copied whole, not a character at a time.
+            out.push_str(s);
         } else {
             let mut chars = s.chars().peekable();
             while let Some(c) = chars.next() {
@@ -869,7 +945,8 @@ impl TextEdit {
             self.mark_edited();
             return;
         }
-        let before = self.snapshot();
+        // Only the bytes this replaces: a keystroke in a long draft copies none of the rest.
+        let before = self.ranged(a, b);
         let inserted_marks: Vec<Mark> = if s.is_empty() {
             self.typing = Typing::Inherited;
             Vec::new()
@@ -892,7 +969,7 @@ impl TextEdit {
         };
 
         self.apply_text_and_attr_replace((a, b), s, &inserted_marks, None, false);
-        self.record_change(before, kind);
+        self.record_ranged(before, s, kind);
     }
 
 }

@@ -106,6 +106,24 @@ fn undo_and_redo_restore_a_heading() {
 }
 
 #[test]
+fn a_stored_history_keeps_its_headings() {
+    let mut e = titled();
+    e.set_selection(7, 7);
+    e.set_block(Block::Heading(3));
+    let stored = e.history_json(100, 1 << 20).expect("a history");
+    let mut back = TextEdit::from_parts(
+        "Title\nbody",
+        vec![],
+        vec![Block::Heading(1), Block::Heading(3)],
+    );
+    assert!(back.restore_history_json(&stored), "the history is taken back");
+    back.undo();
+    assert_eq!(back.blocks(), [Block::Heading(1), Block::Paragraph]);
+    back.redo();
+    assert_eq!(back.blocks(), [Block::Heading(1), Block::Heading(3)]);
+}
+
+#[test]
 fn html_headings_round_trip_without_a_bold_mark() {
     let e = TextEdit::from_html("<h1>Big</h1><h3>Small <em>it</em></h3><p>text</p>");
     assert_eq!(e.text, "Big\nSmall it\ntext");

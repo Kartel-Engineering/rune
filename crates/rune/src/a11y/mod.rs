@@ -28,6 +28,7 @@ pub(crate) struct Announcement {
     text: String,
     how: crate::LiveRegion,
     said: u32,
+    at: Option<crate::time::Instant>,
 }
 
 impl Announcement {
@@ -35,9 +36,15 @@ impl Announcement {
         self.text = text;
         self.how = how;
         self.said = self.said.wrapping_add(1);
+        self.at = Some(crate::time::Instant::now());
     }
 
     pub(crate) fn said(&self) -> u32 { self.said }
+
+    /// Said in the last moments: a reader that attached as it was said should still hear it.
+    pub(crate) fn recent(&self) -> bool {
+        self.at.is_some_and(|t| t.elapsed() < std::time::Duration::from_millis(1500))
+    }
 
     /// The live region's name and politeness, if anything was said. Every other call ends in
     /// a zero-width space, which readers don't speak, so a repeat still changes the name.
@@ -53,6 +60,9 @@ impl Announcement {
 pub(crate) struct Inbox {
     asked: Asked,
     actions: Vec<ActionRequest>,
+    /// The system's accessibility settings or colours changed (reduced motion, a contrast
+    /// theme): the runtime reads them again.
+    settings: bool,
 }
 
 /// What a client asked of the runtime's tree. The later call wins, so the two cannot disagree.
@@ -149,6 +159,11 @@ impl AccessibilityLink {
     fn receive<S: 'static>(&mut self, rt: &mut Runtime<S>, name: &str) -> bool {
         self.adopt(rt);
         let inbox = self.take();
+        if inbox.settings {
+            rt.set_system_reduced_motion(crate::platform::preferences::reduced_motion());
+            rt.set_system_contrast(crate::platform::preferences::contrast());
+            rt.set_system_increased_contrast(crate::platform::preferences::increased_contrast());
+        }
         match inbox.asked {
             Asked::Activate => rt.a11y_activate(name),
             Asked::Deactivate => rt.a11y_deactivate(),

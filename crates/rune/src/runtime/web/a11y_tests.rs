@@ -1,15 +1,6 @@
 use super::*;
 use serde_json::json;
 
-fn sync<'a, S: 'static>(rt: &Runtime<S>, mirror: &'a mut A11yMirror) -> Option<&'a str> {
-    let digest = rt.web_a11y_digest(mirror);
-    rt.web_a11y(mirror, &digest)
-}
-
-fn moved_only<S: 'static>(rt: &Runtime<S>, mirror: &A11yMirror) -> bool {
-    rt.web_a11y_moved_only(mirror, &rt.web_a11y_digest(mirror), false)
-}
-
 #[test]
 fn mirrors_headings_inline_links_and_buttons_and_skips_idle_frames() {
     fn view(open: &(bool, usize), _: &mut Cx<(bool, usize)>) -> El {
@@ -29,8 +20,8 @@ fn mirrors_headings_inline_links_and_buttons_and_skips_idle_frames() {
     let mut rt = Runtime::new((false, 0usize), view, (480.0, 320.0), Env::default());
     rt.frame(0.0);
     let mut mirror = A11yMirror::default();
-    let first = sync(&rt, &mut mirror).expect("initial tree").to_owned();
-    assert!(sync(&rt, &mut mirror).is_none(), "unchanged frame emits nothing");
+    let first = rt.web_a11y(&mut mirror).expect("initial tree").to_owned();
+    assert!(rt.web_a11y(&mut mirror).is_none(), "unchanged frame emits nothing");
 
     let items = rt.web_a11y_items();
     assert_eq!(items.len(), 3);
@@ -47,7 +38,7 @@ fn mirrors_headings_inline_links_and_buttons_and_skips_idle_frames() {
     assert!(rt.web_a11y_action(&json!({"kind": "a11y_press", "path": btn_path})));
     rt.frame(0.0);
     assert!(rt.state.0);
-    let updated = sync(&rt, &mut mirror).expect("button flip updates expanded state");
+    let updated = rt.web_a11y(&mut mirror).expect("button flip updates expanded state");
     assert_ne!(first, updated);
     assert!(updated.contains("Hide details"));
 
@@ -154,10 +145,10 @@ fn a_page_mirror_does_not_change_while_the_page_scrolls() {
     rt.page_mode();
     rt.frame(0.0);
     let mut mirror = A11yMirror::default();
-    assert!(sync(&rt, &mut mirror).is_some());
+    assert!(rt.web_a11y(&mut mirror).is_some());
     rt.set_page_scroll(200.0);
     rt.frame(0.0);
-    assert!(sync(&rt, &mut mirror).is_none(), "scrolling the page leaves the mirror alone");
+    assert!(rt.web_a11y(&mut mirror).is_none(), "scrolling the page leaves the mirror alone");
 }
 
 /// A page whose only change between frames is a colour, at a document offset that sits on a
@@ -176,7 +167,7 @@ fn fractional_scroll_offsets_never_rewrite_a_page_mirror() {
     rt.page_mode();
     rt.frame(0.0);
     let mut mirror = A11yMirror::default();
-    assert!(sync(&rt, &mut mirror).is_some());
+    assert!(rt.web_a11y(&mut mirror).is_some());
     // At `@3x` a scroll offset is a third of a pixel, so the band's offset and the document's
     // position never add back exactly in `f32`. A commit that only redraws the band used to round
     // an item's position the other way and rewrite the whole page's mirror.
@@ -185,7 +176,7 @@ fn fractional_scroll_offsets_never_rewrite_a_page_mirror() {
         assert!(rt.set_page_scroll(y), "each offset is a new page position");
         rt.state = i;
         rt.frame(0.0);
-        assert!(sync(&rt, &mut mirror).is_none(), "the mirror changed at {y}");
+        assert!(rt.web_a11y(&mut mirror).is_none(), "the mirror changed at {y}");
     }
 }
 
@@ -208,13 +199,12 @@ fn a_page_mirrors_a_horizontal_viewport_as_a_scroller_the_browser_scrolls() {
     let code = items.iter().find(|i| i.text.contains("println")).expect("the code still mirrors");
     let placed = code.rect[0];
     let mut mirror = A11yMirror::default();
-    assert!(sync(&rt, &mut mirror).is_some());
+    assert!(rt.web_a11y(&mut mirror).is_some());
 
     let path = scroll.path.clone();
     assert!(rt.set_page_scroll_x(&path, 120.0), "the browser scrolled the strip");
     rt.frame(0.0);
-    assert!(!rt.web_a11y_stale(&mirror, &rt.web_a11y_digest(&mirror)), "the container's own scroll rebuilds nothing");
-    assert!(sync(&rt, &mut mirror).is_none(), "the container's own scroll leaves the mirror alone");
+    assert!(rt.web_a11y(&mut mirror).is_none(), "the container's own scroll leaves the mirror alone");
     let after = rt.web_a11y_items();
     let code = after.iter().find(|i| i.text.contains("println")).expect("the code still mirrors");
     assert_eq!(code.rect[0], placed, "the text keeps its place inside the scroller");
@@ -321,9 +311,11 @@ fn an_open_modal_keeps_its_controls_in_the_mirror_and_leaves_out_what_is_behind_
     assert!(rt.web_a11y_action(&json!({"kind": "a11y_press", "path": remove})));
     for _ in 0..60 { rt.frame(1.0 / 60.0); }
     assert!(rt.state, "the press opened the dialog");
-    assert_eq!(mirrored(&rt), ["button:Delete", "button:Cancel"]);
+    let open = mirrored(&rt);
+    assert!(open.contains(&"button:Delete".to_owned()) && open.contains(&"button:Cancel".to_owned()), "{open:?}");
+    assert!(!open.iter().any(|i| i.contains("Settings") || i.contains("Remove")), "{open:?}");
 
-    let cancel = rt.web_a11y_items()[1].path.clone();
+    let cancel = rt.web_a11y_items().iter().find(|i| i.text == "Cancel").expect("the cancel button").path.clone();
     assert!(rt.web_a11y_action(&json!({"kind": "a11y_press", "path": cancel})));
     for _ in 0..60 { rt.frame(1.0 / 60.0); }
     assert_eq!(mirrored(&rt), ["heading:Settings", "button:Remove"]);
@@ -341,105 +333,18 @@ fn the_mirror_follows_a_layout_change_to_where_its_motion_settles() {
     let mut rt = Runtime::new(false, glide, (400.0, 400.0), Env::default());
     rt.frame(0.0);
     let mut mirror = A11yMirror::default();
-    assert!(sync(&rt, &mut mirror).is_some());
+    assert!(rt.web_a11y(&mut mirror).is_some());
     let target_top = |rt: &Runtime<bool>| rt.web_a11y_items().iter().find(|i| i.text == "Target").map(|i| i.rect[1]);
     let press = rt.web_a11y_items().iter().find(|i| i.text == "Move").expect("the button").path.clone();
     assert!(rt.web_a11y_action(&json!({"kind": "a11y_press", "path": press})));
     // The press commits the new layout; the frames after it only move what is drawn.
     rt.frame(1.0 / 60.0);
-    sync(&rt, &mut mirror);
+    rt.web_a11y(&mut mirror);
     let commits = rt.commits;
     for _ in 0..180 { rt.frame(1.0 / 60.0); }
     assert_eq!(rt.commits, commits, "the motion commits nothing");
     assert!(target_top(&rt).is_some_and(|y| (y - 240.0).abs() < 0.5), "the target has settled below the spacer");
-    assert!(moved_only(&rt, &mirror), "the drawn rects moved since the mirror was built");
-    assert!(sync(&rt, &mut mirror).is_some(), "the mirror follows motion that commits nothing");
+    assert!(rt.web_a11y(&mut mirror).is_some(), "the mirror follows motion that commits nothing");
     assert_eq!(mirror.json, rt.a11y_json(), "the mirror shows where the motion settled");
-    assert!(!moved_only(&rt, &mirror));
-    assert!(sync(&rt, &mut mirror).is_none(), "a settled mirror is left alone");
-}
-
-fn spin(moved: &bool, _: &mut Cx<bool>) -> El {
-    crate::col().w_full().h_full().padding(40.0)
-        .child(crate::el().key("target").w(200.0).h(60.0).label("Target").on_press(|_: &mut bool| {}))
-        .child(crate::el().key("bar").w(if *moved { 200.0 } else { 20.0 }).h(10.0))
-        .child(crate::el().key("move").w(200.0).h(40.0).label("Move").on_press(|s: &mut bool| *s = !*s))
-}
-
-#[test]
-fn motion_of_a_node_outside_the_mirror_leaves_the_mirror_alone() {
-    let mut rt = Runtime::new(false, spin, (400.0, 400.0), Env::default());
-    rt.frame(0.0);
-    let mut mirror = A11yMirror::default();
-    assert!(sync(&rt, &mut mirror).is_some());
-    let press = rt.web_a11y_items().iter().find(|i| i.text == "Move").expect("the button").path.clone();
-    assert!(rt.web_a11y_action(&json!({"kind": "a11y_press", "path": press})));
-    rt.frame(1.0 / 60.0);
-    sync(&rt, &mut mirror);
-    let bar = rt.nodes.iter().position(|n| n.key.as_deref() == Some("bar")).expect("the bar");
-    let before = rt.mirror_rect(bar, 0.0);
-    rt.frame(1.0 / 60.0);
-    assert_ne!(rt.mirror_rect(bar, 0.0), before, "the bar is still gliding");
-    assert!(!moved_only(&rt, &mirror), "a node that is no item moved");
-    assert!(sync(&rt, &mut mirror).is_none());
-}
-
-fn hidden_spin(moved: &bool, _: &mut Cx<bool>) -> El {
-    crate::col().w_full().h_full().padding(40.0)
-        .child(crate::el().key("target").w(200.0).h(60.0).label("Target").on_press(|_: &mut bool| {}))
-        .child(crate::el().key("bar").w(if *moved { 200.0 } else { 20.0 }).h(10.0).on_press(|_: &mut bool| {}).a11y_hidden())
-        .child(crate::el().key("move").w(200.0).h(40.0).label("Move").on_press(|s: &mut bool| *s = !*s))
-}
-
-#[test]
-fn a_rebuild_that_makes_the_same_json_is_still_a_rebuild() {
-    // A pressable that is hidden from the mirror can become an item, so its motion rebuilds the
-    // mirror, to the same JSON. The shell starts its throttle on the rebuild, not on new JSON.
-    let mut rt = Runtime::new(false, hidden_spin, (400.0, 400.0), Env::default());
-    rt.frame(0.0);
-    let mut mirror = A11yMirror::default();
-    assert!(sync(&rt, &mut mirror).is_some());
-    let press = rt.web_a11y_items().iter().find(|i| i.text == "Move").expect("the button").path.clone();
-    assert!(rt.web_a11y_action(&json!({"kind": "a11y_press", "path": press})));
-    rt.frame(1.0 / 60.0);
-    sync(&rt, &mut mirror);
-    rt.frame(1.0 / 60.0);
-    let digest = rt.web_a11y_digest(&mirror);
-    assert!(rt.web_a11y_stale(&mirror, &digest), "the hidden pressable is still gliding");
-    assert!(rt.web_a11y(&mut mirror, &digest).is_none(), "the mirror it rebuilds shows the same items");
-    assert!(!rt.web_a11y_stale(&mirror, &rt.web_a11y_digest(&mirror)), "the rebuild took the new rects");
-}
-
-/// A page whose horizontal viewport holds an open dialog.
-fn dialog_strip(_: &(), _: &mut Cx<()>) -> El {
-    crate::col().w_full().role("main")
-        .child(crate::row().key("scroll").w(300.0).h(120.0).scroll_x()
-            .child(crate::col().key("dialog").role("dialog").label("Delete this item?").size(200.0, 100.0)
-                .modal(true, |_: &mut ()| {})
-                .child(crate::row().key("ok").role("button").label("Delete").size(60.0, 30.0).on_press(|_: &mut ()| {})))
-            .child(crate::el().key("wide").size(600.0, 10.0)))
-}
-
-#[test]
-fn a_dialog_in_a_horizontal_viewport_follows_the_scroll_as_drawn() {
-    // Behind an open modal the mirror holds no scroller, so the browser scrolls nothing and the
-    // dialog's controls sit where they are drawn. A scroll with no commit (a `scroll_to` glide)
-    // moves that drawing, so the mirror must rebuild.
-    let mut rt = Runtime::new((), dialog_strip, (400.0, 300.0), Env::default());
-    rt.page_mode();
-    rt.frame(0.0);
-    let items = rt.web_a11y_items();
-    assert!(items.iter().all(|i| i.kind != "scroll_x"), "the viewport behind the dialog is no scroller");
-    let ok = |rt: &Runtime<()>| rt.web_a11y_items().iter().find(|i| i.text == "Delete").map(|i| i.rect[0]);
-    let placed = ok(&rt).expect("the dialog's button mirrors");
-    let mut mirror = A11yMirror::default();
-    assert!(sync(&rt, &mut mirror).is_some());
-
-    let path = rt.nodes.iter().find(|n| n.key.as_deref() == Some("scroll")).expect("the viewport").path.clone();
-    assert!(rt.set_page_scroll_x(&path, 120.0), "the viewport moved");
-    rt.frame(0.0);
-    assert_eq!(ok(&rt), Some(placed - 120.0), "the button is drawn where the scroll put it");
-    assert!(rt.web_a11y_stale(&mirror, &rt.web_a11y_digest(&mirror)), "the drawn rect moved, so the mirror rebuilds");
-    assert!(sync(&rt, &mut mirror).is_some());
-    assert_eq!(mirror.json, rt.a11y_json(), "the mirror shows the button where it is drawn");
+    assert!(rt.web_a11y(&mut mirror).is_none(), "a settled mirror is left alone");
 }

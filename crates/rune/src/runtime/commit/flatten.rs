@@ -1,8 +1,8 @@
 use std::borrow::Cow;
-
 use crate::el::ElFlags;
 
 use super::*;
+mod device;
 
 /// An `aspect_fit` element's first layout: it takes the free space along its parent's main axis
 /// and the whole cross side, within its max sizes, as the room its fitted box must fit. Its
@@ -221,6 +221,8 @@ fn prepare_text(
 ) -> (Option<u64>, bool) {
     if let Some(t) = text
         && let dir = crate::el::step_text_dir(t.dir, crate::el::TextDirEvent::Flatten(flow))
+        // A field Ctrl+Shift set reads that way, every line of it.
+        && let dir = input.and_then(|i| i.edit.forced_dir()).map_or(dir, crate::el::TextDir::Fixed)
         && t.dir != dir
     {
         t.dir = dir;
@@ -279,18 +281,12 @@ fn prepare_text(
     let measure = text.as_ref().map(|t| t.shape.map_or(0, |s| s.1) ^ u64::from(t.wrap) ^ (u64::from(t.truncate || t.truncate_fade) << 1)
         ^ ((t.max_lines as u64) << 2)
         ^ (u64::from(input.is_some_and(|i| i.edit.is_revealed()) || t.cold.secure_revealed) << 3)
-        ^ (u64::from(t.wrap_anywhere) << 4)
+        ^ (u64::from(t.wrap_anywhere) << 4) ^ (u64::from(t.greedy) << 5)
         ^ t.cold.advance_in.as_ref().map_or(0, |(run, at)| run.hash.rotate_left(3) ^ (*at as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15)));
     // Secure leaves remeasure without retaining a content-derived dictionary oracle.
     let secure_measure = text.as_ref().is_some_and(|t| t.redacted);
     let measure = if secure_measure { Some(0) } else { measure };
     (measure, secure_measure)
-}
-
-/// `El::border_layout`: the border's sides as layout room, each as wide as it draws at `scale`.
-fn lay_out_border(style: &mut CompactStyle, vis: &Visual, scale: f32) {
-    let sides = vis.border_sides.unwrap_or([vis.border_width(); 4]);
-    style.set_border(sides.map(|w| crate::runtime::pixel_snap::line_width(w * scale) / scale));
 }
 
 /// Text, an icon, and a text field's placeholder, caret and selection that weren't given a
@@ -418,7 +414,8 @@ fn flatten_owned(
         return (slot, false);
     }
     let record_built = parent_sx.is_none().then(|| {
-        let built = el.memo_built().filter(|b| b.reusable && memo_reuse::same_root_el(&el, b))?;
+        let built = el.memo_built().filter(|b| b.reusable && memo_reuse::same_root_el(&el, b, false))
+            .or_else(|| el.cold.expanded_memo.as_ref().filter(|b| b.reusable && memo_reuse::same_root_el(&el, b, true)))?;
         let (inherited, hover_within) = memo_reuse::inherited_for(parent, nodes, motion, in_row, scale, memo_ctx.foreground);
         Some((built.id, inherited, hover_within))
     }).flatten();
@@ -446,6 +443,7 @@ fn flatten_owned(
     let directed = el.flags.dir().is_some() || parent.is_some_and(|p| nodes[p].directed);
     let pin = crate::el::Pin::of(&el);
     let El { handlers, key, mut style, mut vis, vis_flags, mut text, children, memo, mut cold, scale: static_scale, .. } = el;
+    let option_as_alt = cold.option_as_alt;
     let focus = cold.focus.clone();
     // Only a text field's element has to own its cold fields here; a memo placeholder shares them.
     let mut input = if cold.input.is_some() { cold.get_mut_if_some().and_then(|c| c.input.take()) } else { None };
@@ -454,7 +452,8 @@ fn flatten_owned(
     }
     let (measure, secure_measure) = prepare_text(&mut text, input.as_deref(), scale, directed.then_some(flow));
     take_foreground(&mut text, input.as_deref_mut(), &mut vis, memo_ctx.foreground);
-    if vis.border_layout { lay_out_border(&mut style, &vis, scale); }
+    if vis.border_layout { device::border(&mut style, &vis, scale); }
+    if let Some(metrics) = cold.list_disc { device::disc(&mut style, metrics, scale); }
     if dir_effect == crate::el::DirEffect::Mirror {
         crate::el::mirror_visual(&mut vis);
         if let Some(a) = cold.get_mut_if_some().and_then(|c| c.above.as_mut()) { crate::el::mirror_anchor(a); }
@@ -563,7 +562,9 @@ fn flatten_owned(
         selection_group: flags.has(ElFlags::SELECTION_GROUP),
         window_drag: flags.window_drag(),
         ime_cursor: flags.has(ElFlags::IME_CURSOR),
+        ime_option_as_alt: option_as_alt,
         moved_stub: false,
+        epoch: crate::runtime::paint_keep::next_epoch(),
     });
     let child_in_row = match in_row {
         RowLayout::Free if parent_is_stack => if animate_layout { RowLayout::Horizontal } else { RowLayout::Snaps },
@@ -621,7 +622,8 @@ fn flatten_ref(
         return (slot, false);
     }
     let record_built = parent_sx.is_none().then(|| {
-        let built = el.memo_built().filter(|b| b.reusable && memo_reuse::same_root_el(el, b))?;
+        let built = el.memo_built().filter(|b| b.reusable && memo_reuse::same_root_el(el, b, false))
+            .or_else(|| el.cold.expanded_memo.as_ref().filter(|b| b.reusable && memo_reuse::same_root_el(el, b, true)))?;
         let (inherited, hover_within) = memo_reuse::inherited_for(parent, nodes, motion, in_row, scale, memo_ctx.foreground);
         Some((built.id, inherited, hover_within))
     }).flatten();
@@ -657,7 +659,8 @@ fn flatten_ref(
     let inert = flags.has(ElFlags::INERT) || parent.is_some_and(|p| nodes[p].inert);
     let mut vis = el.vis.clone();
     take_foreground(&mut text, input.as_deref_mut(), &mut vis, memo_ctx.foreground);
-    if vis.border_layout { lay_out_border(style.to_mut(), &vis, scale); }
+    if vis.border_layout { device::border(style.to_mut(), &vis, scale); }
+    if let Some(metrics) = c.list_disc { device::disc(style.to_mut(), metrics, scale); }
     if dir_effect == crate::el::DirEffect::Mirror { crate::el::mirror_visual(&mut vis); }
     let hover_within = inherit_hover_within(&vis, c.above.as_ref(), parent, nodes);
     let pixel_aspect = vis.pixels.as_ref()
@@ -764,7 +767,9 @@ fn flatten_ref(
         selection_group: flags.has(ElFlags::SELECTION_GROUP),
         window_drag: flags.window_drag(),
         ime_cursor: flags.has(ElFlags::IME_CURSOR),
+        ime_option_as_alt: el.cold.option_as_alt,
         moved_stub: false,
+        epoch: crate::runtime::paint_keep::next_epoch(),
     });
     let child_in_row = match in_row {
         RowLayout::Free if parent_is_stack => if animate_layout { RowLayout::Horizontal } else { RowLayout::Snaps },

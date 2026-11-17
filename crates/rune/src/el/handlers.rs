@@ -44,6 +44,16 @@ impl El {
         self.handlers.on_double_press = Some(Rc::new(move |s, tx| f(downcast::<S>(s), tx)));
         self
     }
+    /// A middle click (a browser's `auxclick` with the wheel button): the middle button went
+    /// down on this element, or one inside it that doesn't take the middle button itself, and
+    /// came up over it. A tab closes this way, a row opens in the background. A press that leaves
+    /// first runs nothing. It changes no focus, starts no drag (`on_drag` hears only the buttons
+    /// [`El::pointer_buttons`] names) and, where the platform has it, keeps the middle button's
+    /// autoscroll from starting.
+    pub fn on_middle_press<S: 'static>(mut self, f: impl Fn(&mut S, &mut Tx) + 'static) -> Self {
+        self.handlers.on_middle_press = Some(Rc::new(move |s, tx| f(downcast::<S>(s), tx)));
+        self
+    }
     /// Receives Down, Move, then Up. Up also ends a cancelled gesture: always check
     /// [`Drag::cancelled`] before committing a drop or notifying an application callback.
     /// Save the original value on Down (in state, or [`Drag::data`]) and restore it on cancel.
@@ -88,6 +98,21 @@ impl El {
     /// # struct App;
     /// el().drag_out(|_: &App| Some(DragItem::new().text("row"))).drag_threshold(3.0);
     /// ```
+    /// A finger on this [`El::on_drag`] element drags it from where it lands: no 8-point slop,
+    /// no long press (a finger held still keeps dragging, as a game's paddle wants), and never a
+    /// pan of the page under it. A mouse is unchanged.
+    pub fn touch_drags_at_once(mut self) -> Self {
+        self.handlers.touch_at_once = true;
+        self
+    }
+    /// A menu button: a mouse's primary button runs [`El::on_press`] as it goes down, and that
+    /// press's release runs nothing (the web's Kobalte `Menu.Trigger` opens on `pointerdown`).
+    /// A press that's then cancelled or released elsewhere has already run it. A key, a screen
+    /// reader's Invoke and a finger's tap run it on the click, as without this.
+    pub fn press_on_down(mut self) -> Self {
+        self.handlers.press_on_down = true;
+        self
+    }
     pub fn drag_threshold(mut self, points: f32) -> Self {
         self.handlers.drag_threshold = Some(points.max(0.0));
         self

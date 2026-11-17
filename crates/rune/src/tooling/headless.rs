@@ -181,6 +181,7 @@ pub(crate) fn headless_configured<S: 'static>(mut app: crate::app::App<S>, args:
         shortcuts.drain();
         let requests = shared.take();
         menus.drain();
+        let _receiving = shortcuts.receiving();
         for f in requests.updates {
             rt.update_if(f);
             menus.drain();
@@ -365,13 +366,13 @@ pub(crate) fn headless_configured<S: 'static>(mut app: crate::app::App<S>, args:
             c.render(&mut f);
             animating |= c.animating();
         } else {
-            renderer.prepare(&gpu.device, &gpu.queue, &mut rt.text.atlas, &rt.instances, (wp, hp));
+            renderer.prepare_ui(&gpu.device, &gpu.queue, &mut rt.text.atlas, &rt.instances, (wp, hp));
             renderer.draw(&mut enc, view, rt.clear_color());
         }
         if let Some((ov, ui)) = overlay.as_mut() {
             let ort = ov.frame(real_t, step, rt.backdrop_dark().unwrap_or(dark));
             if !ort.instances.is_empty() {
-                ui.prepare(&gpu.device, &gpu.queue, &mut ort.text.atlas, &ort.instances, (wp, hp));
+                ui.prepare_ui(&gpu.device, &gpu.queue, &mut ort.text.atlas, &ort.instances, (wp, hp));
                 ui.draw_over(&mut enc, view);
             }
         }
@@ -493,6 +494,10 @@ pub(crate) fn headless_configured<S: 'static>(mut app: crate::app::App<S>, args:
     );
     if let Some(s) = comp.as_mut().and_then(|c| c.summary(&gpu.device)) {
         eprintln!("{s}");
+    }
+    // A headless run opens no links (`Tx::open_url`): say which its handlers asked for.
+    for url in rt.take_url_requests() {
+        eprintln!("rune: open_url {url} (headless: not opened)");
     }
 }
 

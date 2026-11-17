@@ -77,6 +77,7 @@ atoms! {
     ScrollX = "scrollX",
     StickBottom = "stickBottom",
     OnPress = "onPress",
+    MenuTrigger = "menuTrigger",
     Color = "color",
     Size = "size",
     Weight = "weight",
@@ -96,6 +97,7 @@ atoms! {
     RowVersions = "rowVersions",
     OnVisibleRows = "onVisibleRows",
     OnHover = "onHover",
+    OnMiddlePress = "onMiddlePress",
     HoverTransition = "hoverTransition",
     HoverGroup = "hoverGroup",
     HoverGroupColor = "hoverGroupColor",
@@ -199,6 +201,7 @@ const LEFT: u8 = 8;
 pub(crate) struct Props {
     pub(crate) key: Option<String>,
     pub(crate) on_hover: Option<Rc<Callback>>,
+    pub(crate) on_middle_press: Option<Rc<Callback>>,
     pad: Option<f32>,
     sides: u8,
     role: Option<&'static str>,
@@ -206,6 +209,8 @@ pub(crate) struct Props {
     corners: Option<[f32; 4]>,
     selected: bool,
     pub(crate) disabled: bool,
+    /// `menuTrigger`: the `onPress` opens a menu, so a mouse runs it as its button goes down.
+    menu_trigger: bool,
     text: TextStyle,
     color: Option<Color>,
     truncate: bool,
@@ -228,6 +233,7 @@ impl Props {
         Props {
             key: None,
             on_hover: None,
+            on_middle_press: None,
             pad: None,
             sides: 0,
             role: None,
@@ -235,6 +241,7 @@ impl Props {
             corners: None,
             selected: false,
             disabled: false,
+            menu_trigger: false,
             text: env.text,
             color: None,
             truncate: false,
@@ -250,13 +257,21 @@ impl Props {
         }
     }
 
-    /// Applies what waited for the whole table: the press and hover handlers (`press` is the
-    /// node's `onPress`), then the props that depend on others, the text style and the key.
+    /// Applies what waited for the whole table: the press, middle-click and hover handlers (`press`
+    /// is the node's `onPress`), then the props that depend on others, the text style and the key.
     pub(crate) fn finish(self, e: &mut El, env: &Env, is_text: bool, press: Option<Rc<Callback>>, attach: &'static Attach) {
         let press = press.filter(|_| !self.disabled);
-        let key: Option<Rc<str>> = (press.is_some() || self.on_hover.is_some()).then(|| self.key.as_deref().map(Into::into)).flatten();
+        let middle = self.on_middle_press.filter(|_| !self.disabled);
+        let key: Option<Rc<str>> = (press.is_some() || middle.is_some() || self.on_hover.is_some()).then(|| self.key.as_deref().map(Into::into)).flatten();
         if let Some(cb) = press {
             (attach.press)(e, cb, key.clone(), Rc::new([]));
+            // Kobalte's `Menu.Trigger` opens on a mouse's `pointerdown`; keys and taps on the click.
+            if self.menu_trigger {
+                with(e, El::press_on_down);
+            }
+        }
+        if let Some(cb) = middle {
+            with(e, |e| (attach.middle)(e, cb, key.clone()));
         }
         if let Some(cb) = self.on_hover {
             with(e, |e| (attach.hover)(e, cb, key));
@@ -530,6 +545,7 @@ impl Props {
                 }
             }
             Atom::Disabled => self.disabled = flag(v)?,
+            Atom::MenuTrigger => self.menu_trigger = flag(v)?,
             Atom::HelpSide => {
                 let side = match v {
                     Value::Str("top") => Some(rune::Side::Top),
@@ -584,7 +600,7 @@ impl Props {
                 })
             }
             // Read by the node that takes them; elsewhere they mean nothing.
-            Atom::OnPress | Atom::OnHover | Atom::Count | Atom::EstimatedRowHeight | Atom::Version | Atom::RenderRow | Atom::RowKey | Atom::RowVersions | Atom::OnVisibleRows => {
+            Atom::OnPress | Atom::OnHover | Atom::OnMiddlePress | Atom::Count | Atom::EstimatedRowHeight | Atom::Version | Atom::RenderRow | Atom::RowKey | Atom::RowVersions | Atom::OnVisibleRows => {
                 env.warn_once(format!("{name} has no effect on this node"));
             }
         }

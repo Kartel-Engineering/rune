@@ -19,6 +19,8 @@ pub(crate) struct Handlers {
     pub on_press: Option<PressFn>,
     pub on_double_press: Option<PressFn>,
     pub on_secondary_press: Option<PointerFn>,
+    /// `El::on_middle_press`.
+    pub on_middle_press: Option<PressFn>,
     pub on_hover: Option<PressFn>,
     pub on_hover_change: Option<WindowFocusFn>,
     /// Seconds the pointer must stay inside, then outside, before `on_hover_change` hears it.
@@ -29,6 +31,10 @@ pub(crate) struct Handlers {
     pub on_drag: Option<DragFn>,
     pub drag_out: Option<DragOutFn>,
     pub drag_threshold: Option<f32>,
+    /// `El::touch_drags_at_once`.
+    pub touch_at_once: bool,
+    /// `El::press_on_down`.
+    pub press_on_down: bool,
     pub on_drag_start: Option<PressFn>,
     pub on_drag_end: Option<DragEndFn>,
     pub drop: Option<Box<DropSpec>>,
@@ -86,6 +92,7 @@ impl Handlers {
             || self.on_press.is_some()
             || self.on_double_press.is_some()
             || self.on_secondary_press.is_some()
+            || self.on_middle_press.is_some()
             || self.on_hover.is_some()
             || self.on_hover_change.is_some()
             || self.on_drag.is_some()
@@ -105,6 +112,7 @@ impl Empty for Handlers {
         on_press: None,
         on_double_press: None,
         on_secondary_press: None,
+        on_middle_press: None,
         on_hover: None,
         on_hover_change: None,
         hover_delay: [0.0; 2],
@@ -113,6 +121,8 @@ impl Empty for Handlers {
         on_drag: None,
         drag_out: None,
         drag_threshold: None,
+        touch_at_once: false,
+        press_on_down: false,
         on_drag_start: None,
         on_drag_end: None,
         drop: None,

@@ -67,6 +67,15 @@ pub(super) fn group_tint(n: &Node, c: Color, group: f32) -> Color {
     }
 }
 
+/// Text or icon colour `c` while a press on the nearest `El::press_color` element is held (`pressed`,
+/// 0 to 1): mixed toward that colour.
+pub(super) fn press_tint(c: Color, to: Option<Color>, pressed: f32) -> Color {
+    match to {
+        Some(p) if pressed > 0.0 => c.mix(p, pressed),
+        _ => c,
+    }
+}
+
 /// Which of a node's colours a live value owns. A commit leaves those tracks to the latch.
 #[derive(Clone, Copy, Default)]
 pub(super) struct LiveColors {
@@ -251,7 +260,7 @@ impl<S: 'static> Runtime<S> {
             && memo_reuse::same_visual(&n.vis, &o.vis)
             && text_color(n) == text_color(o)
             && n.text.as_ref().is_none_or(|t| {
-                t.reveal < 0.0 || self.reveals.get(&n.id).is_some_and(|r| r.words.is_empty() && r.len == t.content.len())
+                t.reveal < 0.0 || self.reveals.get(&n.id).is_some_and(|r| r.caught_up(t.content.len()))
             })
             && self.scene.is_resting_at(n.id, scene_rect)
             && (self.stacks.is_empty()

@@ -36,7 +36,18 @@ pub fn mark(name: &'static str) {
     let mut book = book();
     if !book.marks.iter().any(|(n, _)| *n == name) {
         book.marks.push((name, now));
+        // A page's marks are the browser's too: its performance timeline and DevTools show them.
+        #[cfg(target_arch = "wasm32")]
+        page_mark(name);
     }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn page_mark(name: &str) {
+    use wasm_bindgen::JsCast;
+    let Ok(performance) = js_sys::Reflect::get(&js_sys::global(), &"performance".into()) else { return };
+    let Ok(mark) = js_sys::Reflect::get(&performance, &"mark".into()) else { return };
+    if let Some(mark) = mark.dyn_ref::<js_sys::Function>() { let _ = mark.call1(&performance, &name.into()); }
 }
 
 /// [`mark`] behind a flag of the call site's own, for a step that runs every frame.
@@ -53,8 +64,10 @@ pub fn marks() -> Vec<(&'static str, Instant)> {
 
 /// Totals for the steps before the first presented frame: `text.glyphs` (glyphs rasterised or
 /// queued for the GPU's fill), `text.gpu_fills` (of those, queued for the GPU's fill),
-/// `text.raster_ns` (the UI thread's time rasterising them, in nanoseconds) and
-/// `text.outline_ns` (building the outline records Windfoil's masks are filled from).
+/// `text.raster_ns` (the UI thread's time rasterising them, in nanoseconds),
+/// `text.outline_ns` (building the outline records Windfoil's masks are filled from),
+/// `text.shaped` (texts shaped and broken into lines: layout cache misses) and `text.shape_ns`
+/// (the UI thread's time doing it).
 pub fn metrics() -> Vec<(&'static str, u64)> {
     book().metrics.clone()
 }
@@ -121,10 +134,30 @@ static INPUT_READY: AtomicBool = AtomicBool::new(false);
 pub(crate) fn presented() {
     if !TOTALS_DONE.swap(true, Ordering::Relaxed) {
         mark("frame.first.presented");
+        // Windows' word dictionaries load once the first frame is out (platform/win32/segmenter.rs).
+        #[cfg(all(target_os = "windows", not(feature = "segmenter-dictionaries")))]
+        crate::platform::win32::segmenter::first_frame_presented();
     }
     if !MISSED.swap(false, Ordering::Relaxed) {
         mark_once(&TEXT_COMPLETE, "text.complete");
     }
+}
+
+static KEY_ARRIVED: AtomicBool = AtomicBool::new(false);
+static KEY_HANDLED: AtomicBool = AtomicBool::new(false);
+static PRESS_ARRIVED: AtomicBool = AtomicBool::new(false);
+static PRESS_HANDLED: AtomicBool = AtomicBool::new(false);
+
+/// The launch's first key press and first mouse button press: `input.key.arrived` and
+/// `input.press.arrived` as the window hears them, `input.key.handled` and `input.press.handled`
+/// as a frame runs them, so a trace says how long the first input waited.
+pub(crate) fn input_arrived(key: bool) {
+    if key { mark_once(&KEY_ARRIVED, "input.key.arrived") } else { mark_once(&PRESS_ARRIVED, "input.press.arrived") }
+}
+
+/// See [`input_arrived`].
+pub(crate) fn input_handled(key: bool) {
+    if key { mark_once(&KEY_HANDLED, "input.key.handled") } else { mark_once(&PRESS_HANDLED, "input.press.handled") }
 }
 
 /// The event loop is about to wait for input: after the first present, `input.ready`.

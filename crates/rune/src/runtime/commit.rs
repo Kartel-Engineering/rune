@@ -60,6 +60,8 @@ pub(super) struct Measurement<'a, S: 'static> {
     /// Caption buttons drawn over the view's root.
     pub(super) caption: Option<crate::titlebar::Caption>,
     pub(super) system_accent: crate::SystemAccent,
+    pub(super) system_contrast: Option<crate::SystemContrast>,
+    pub(super) system_increased_contrast: bool,
     pub(super) system_scroll_bars: crate::platform::scroll_bars::SystemScrollBars,
     pub(super) reduced_motion: bool,
     pub(super) time_scale: f32,
@@ -95,6 +97,10 @@ pub(super) struct Measurement<'a, S: 'static> {
     pub(super) pass: Pass,
     /// This commit is a live-only check's: virtual lists keep the rows they mount now.
     pub(super) hold_windows: bool,
+    /// Windows picked for lists in a memo that `keeps_windows` then expanded, by list path.
+    pub(super) windowed: HashMap<String, super::measure::Window>,
+    /// Lists kept with their memo this pass, and which of their mounted rows mount quietly.
+    pub(super) kept_lists: Vec<(String, Vec<bool>)>,
     pub(super) caret: Option<(String, [f32; 4])>,
     pub(super) caret_read: bool,
     pub(super) layout_seen: layout_read::LayoutRects,
@@ -162,6 +168,8 @@ impl<S: 'static> Runtime<S> {
         self.scene.keep_flights(false);
         self.memo.keep_since(self.memo_since);
         self.track_focused_rows();
+        #[cfg(debug_assertions)]
+        if COMMITS.get() % 16 == 1 { self.a11y_warn_nameless(); }
         self.prune_text_selection();
         budget.end(self.watch.cause);
     }

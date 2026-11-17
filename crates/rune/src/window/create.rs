@@ -236,9 +236,7 @@ impl<S: 'static> Host<S> {
         cloak.extend(Instant::now() + win::READY_FALLBACK);
         #[cfg(target_os = "windows")]
         let native = {
-            let handle = self.native_handle.clone();
-            let report = Arc::new(move |covered| handle.send(move |slot| WakeEvent::Covered(slot, covered)));
-            Native { cloak, frame, _occlusion: crate::platform::win32::occlusion::Tracked::new(&window, report), mode: Default::default(), a11y_start, video_layers: Default::default() }
+            Native { cloak, frame, a11y_start, ..Default::default() }
         };
         #[cfg(not(any(target_os = "macos", target_os = "windows")))]
         let native = Native::default();
@@ -258,7 +256,7 @@ impl<S: 'static> Host<S> {
             timer_frame: TimerFrame::default(),
             presented: None,
             #[cfg(target_os = "windows")]
-            steady: Steady::Rest,
+            covered_draw: CoveredDraw::Current,
             redraw: std::cell::Cell::new(Redraw::Idle),
         });
         if launcher { self.win.as_mut().unwrap().first_frame.prepare(Instant::now()); }
@@ -309,12 +307,18 @@ impl<S: 'static> Host<S> {
         crate::a11y::Adapter::new(window, Arc::new(move || handle.send(WakeEvent::A11y)))
     }
 
-    /// Windows: the accessibility adapter a window opened without, on the first idle turn after
-    /// its first frame; assistive clients hear the window's content change so they ask again.
+    /// Whether the window opened without its accessibility adapter and its first frame is up.
+    #[cfg(target_os = "windows")]
+    pub(super) fn a11y_owed(&self) -> bool {
+        self.win.as_ref().is_some_and(|w| w.native.a11y_start == native::A11yStart::AfterFirstFrame && w.first_frame.ready())
+    }
+
+    /// Windows: the accessibility adapter a window opened without, in a turn after its first
+    /// frame (`post_frame`); assistive clients hear the window's content change so they ask again.
     #[cfg(target_os = "windows")]
     pub(super) fn a11y_after_frame(&mut self) {
+        if !self.a11y_owed() { return; }
         let Some(w) = self.win.as_ref() else { return };
-        if w.native.a11y_start != native::A11yStart::AfterFirstFrame || !w.first_frame.ready() { return; }
         let adapter = self.a11y_adapter(&w.window);
         crate::marks::mark("window.a11y");
         let Some(w) = self.win.as_mut() else { return };
@@ -387,6 +391,8 @@ impl<S: 'static> Host<S> {
         w.surface_ok = true;
         w.alpha = alpha;
         #[cfg(target_os = "windows")]
+        { w.native.slot.reset(); w.native.damage.reset(); }
+        #[cfg(target_os = "windows")]
         w.native.mode.rebind();
         #[cfg(target_os = "macos")]
         {
@@ -431,6 +437,8 @@ impl<S: 'static> Host<S> {
         w.config = config;
         w.surface_ok = true;
         w.presented = None;
+        w.native.slot.reset();
+        w.native.damage.reset();
         w.native.mode.rebind();
         Ok(true)
     }

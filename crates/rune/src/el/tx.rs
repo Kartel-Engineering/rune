@@ -24,6 +24,8 @@ pub struct Tx {
     pub(crate) drag_repeat_after: Option<std::time::Duration>,
     /// `Tx::input_time`.
     pub(crate) input_time: Option<crate::time::Instant>,
+    /// `Tx::input_waiting`.
+    pub(crate) input_waiting: bool,
     pub(crate) physical_key: Option<crate::PhysicalKeyCode>,
     pub(crate) key_base: Option<char>,
     pub(crate) focused: Option<String>,
@@ -39,6 +41,11 @@ pub struct Tx {
     pub(crate) unprompted: bool,
     /// A handler called [`Self::animated`].
     pub(crate) asked_motion: bool,
+    /// Virtual growth stacks whose visible tail may grow for this commit alone.
+    pub(crate) live_growth: Vec<(String, bool)>, // selector, carry row ink
+    pub(crate) tail_rooms: Vec<(String, String, String)>,
+    /// A resting poll changed the model but hasn't committed its tree yet.
+    pub(crate) polled_change: bool,
     pub(crate) color_motion: Option<Spring>,
     pub(crate) relayout: bool,
     /// The viewport moved only because the window's own resize animation stepped it.
@@ -65,7 +72,7 @@ pub struct Tx {
     pub(crate) keep_on_screen: Vec<String>,
     pub(crate) wakes: Vec<std::time::Duration>,
     pub(crate) shell: Option<Shell>,
-    pub(crate) minimize: bool,
+    pub(crate) minimize_order: Option<std::num::NonZeroU64>,
     /// `Tx::toggle_maximized`.
     pub(crate) toggle_maximized: bool,
     /// `Tx::toggle_full_screen`.
@@ -96,6 +103,8 @@ pub struct Tx {
     pub(crate) focus_to: Option<(String, bool, FocusAsk)>,
     /// `Tx::focus_visible`.
     pub(crate) focus_visible: bool,
+    /// `Tx::assistive_technology`.
+    pub(crate) assistive: bool,
     /// `Tx::by_keys`.
     pub(crate) by_keys: bool,
     /// The text selection as the event arrived (`Tx::text_selection`).
@@ -115,10 +124,12 @@ pub struct Tx {
     pub(crate) clock: f64,
 }
 
-/// Which asked for focus: [`Tx::focus`], or [`Tx::return_focus`] handing it back.
+/// Which asked for focus: [`Tx::focus`], [`Tx::focus_when_shown`], or [`Tx::return_focus`]
+/// handing it back.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum FocusAsk {
     Focus,
+    WhenShown,
     Return,
 }
 
@@ -139,6 +150,9 @@ pub(crate) enum Commit {
     /// Animate this change; motion an earlier change set going keeps running.
     #[default]
     Animate,
+    /// Only the lack of an input cause made this commit instant. An explicit instant wins
+    /// even over a request to animate a list's tail.
+    Unprompted,
     /// Apply this change at once; motion an earlier change set going keeps running.
     Instant,
     /// Apply this change at once and land every running track.
@@ -149,6 +163,10 @@ pub(crate) enum Commit {
 }
 
 impl Commit {
+    pub(crate) fn without_input(self) -> Self {
+        if self == Self::Animate { Self::Unprompted } else { self.instant() }
+    }
+
     /// The two facts as one intent.
     pub(crate) fn new(snaps: bool, lands: bool) -> Commit {
         match (snaps, lands) {
@@ -161,7 +179,7 @@ impl Commit {
 
     /// This change's own layout applies at once instead of moving on its spring.
     pub(crate) fn snaps(self) -> bool {
-        matches!(self, Commit::Instant | Commit::Settle)
+        matches!(self, Commit::Unprompted | Commit::Instant | Commit::Settle)
     }
 
     /// This change lands every running track: growth, reveals and follow-the-end.
@@ -198,8 +216,9 @@ impl Commit {
 pub(crate) enum MotionSource {
     /// A spring, as Rune's layout springs normally are.
     Spring(Spring),
-    /// A curve, with the zero-bounce spring of its duration for what only takes a spring
-    /// (scroll requests, matched flights).
+    /// A curve, with the zero-bounce spring of its duration for what the layout moves but only
+    /// takes a spring (matched flights). Scroll requests aren't one: they glide on the spring
+    /// they name.
     Curve { anim: Anim, spring: Spring },
 }
 
@@ -384,7 +403,7 @@ impl Tx {
     /// minimize button.
     /// A close or quit asked in the same change wins.
     pub fn minimize(&mut self) {
-        self.minimize = true;
+        self.minimize_order = Some(crate::app::window_request_order());
     }
 
     /// Maximize this window after this handler, or restore it when it is maximized, as its
@@ -488,6 +507,16 @@ impl Tx {
         self.focus_to = Some((key.into(), ring, FocusAsk::Focus));
     }
 
+    /// [`Tx::focus`] for an element that may not be shown yet: content still loading, a card that
+    /// comes in with the next build, a window that isn't drawing. The request waits, through any
+    /// number of commits, until an element with the key shows, and focuses it then, however long
+    /// its loading or motion takes, whatever focus did meanwhile (a closing palette leaving it on
+    /// the prompt). It's dropped when the user presses a key or a pointer button, or when another
+    /// focus is asked for.
+    pub fn focus_when_shown(&mut self, key: impl Into<String>, ring: bool) {
+        self.focus_to = Some((key.into(), ring, FocusAsk::WhenShown));
+    }
+
     /// [`Tx::focus`] for focus a closing menu or popover hands back to its trigger, as a web
     /// menu's `onCloseAutoFocus` does after the change that closed it. A modal that opens in the
     /// same change (a dialog a menu's pick opens) keeps focus, and as it closes hands it back to
@@ -499,6 +528,15 @@ impl Tx {
         if self.focus_to.as_ref().is_none_or(|(.., ask)| *ask == FocusAsk::Return) {
             self.focus_to = Some((key.into(), ring, FocusAsk::Return));
         }
+    }
+
+    /// Whether an assistive client (a screen reader, Voice Access, an automation tool) is
+    /// reading this window's accessibility tree: the tree is built only then. Work done only for
+    /// one, such as deciding what [`Tx::announce`] says, can wait for it and cost nothing without.
+    /// In a browser it's always true: a page can't tell whether a screen reader reads it, and
+    /// its mirror and live regions are always there.
+    pub fn assistive_technology(&self) -> bool {
+        self.assistive
     }
 
     /// Whether keyboard focus was showing its ring (`:focus-visible`) as this event arrived:
@@ -651,15 +689,18 @@ impl Tx {
         self.commit = self.commit.animated();
         self.asked_motion = true;
     }
-    /// Animate this change's layout with `spring` instead of each element's own.
+    /// Animate this change's layout with `spring` instead of each element's own. Scroll
+    /// requests keep the spring they name; see [`Self::motion_curve`].
     pub fn motion(&mut self, spring: Spring) {
         self.motion = Some(MotionSource::Spring(spring));
     }
     /// Animate this change's layout on `anim` instead of each element's own spring: a spring,
     /// or a fixed-duration eased tween to compare against one
     /// (`tx.motion_curve(Curve::tween(0.35, Easing::cubic(0.16, 1.0, 0.3, 1.0)))`). What
-    /// moves with the layout but only takes a spring (scroll requests, matched flights) uses a
-    /// zero-bounce spring of the curve's duration. The last `motion` or `motion_curve` wins.
+    /// moves with the layout but only takes a spring (matched flights) uses a zero-bounce
+    /// spring of the curve's duration. Scroll requests don't follow it: each glides on the
+    /// spring it names, [`Self::scroll_to_with`]'s or `tok::motion::GLIDE`. The last `motion` or
+    /// `motion_curve` wins.
     pub fn motion_curve(&mut self, anim: impl Into<Anim>) {
         self.motion = Some(MotionSource::curve(anim.into()));
     }
