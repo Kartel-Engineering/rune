@@ -228,13 +228,23 @@ fn content(isolates: &[(u32, u32)], at: usize) -> usize {
     at - shift
 }
 
-/// `spans` meeting content bytes `a..b`, cut to them and moved onto the shaped text.
+/// `spans` meeting content bytes `a..b`, cut to them and moved onto the shaped text. A text's
+/// spans are in order, starts and ends (`spans_ordered`), so those are a run found by binary
+/// search: a field's paragraphs each cost their own spans, not all of them.
 fn spans_in<'s>(spans: &'s [Span], a: usize, b: usize, isolates: &'s [(u32, u32)]) -> impl Iterator<Item = Span> + 's {
-    spans.iter().filter(move |s| (s.start as usize) < b && a < s.end as usize).map(move |s| Span {
+    let from = spans.partition_point(|s| s.end as usize <= a);
+    spans[from..].iter().take_while(move |s| (s.start as usize) < b).filter(move |s| a < s.end as usize).map(move |s| Span {
         start: shaped(isolates, (s.start as usize).max(a) - a) as u32,
         end: shaped(isolates, (s.end as usize).min(b) - a) as u32,
         ..s.clone()
     })
+}
+
+/// Whether `spans` are in order as [`spans_in`] needs: starts and ends each never go back.
+/// Every way a text gets spans makes them so (`flatten_spans`, then ring splits and case maps
+/// that keep the order).
+fn spans_ordered(spans: &[Span]) -> bool {
+    spans.windows(2).all(|w| w[0].start <= w[1].start && w[0].end <= w[1].end)
 }
 
 /// `pills` inside content bytes `a..b`, each its label's shaped bytes.
@@ -549,6 +559,7 @@ impl TextSystem {
         if !spec.by_paragraph(input) {
             return TextLayout::Single(self.layout_for_spec(spec, scale, max_width, align));
         }
+        debug_assert!(spans_ordered(&spec.spans), "a text's spans are in order");
         // A field spaced by block whose spaces all come to 0 lays out exactly as with none set.
         let mut spaces: Vec<f32> = if spec.block_spaced() {
             (0..spec.content.split('\n').count()).map(|k| space_above(spec, k, scale)).collect()
