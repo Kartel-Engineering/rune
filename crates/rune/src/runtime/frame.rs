@@ -488,7 +488,8 @@ impl<S: 'static> Runtime<S> {
         let shaped0 = self.text.shaped;
         self.settled = false;
         self.landing_holds.clear();
-        self.clock = self.wall_clock().unwrap_or(self.clock + elapsed);
+        // `RUNE_LOOP_CHECK=1`: the frame that runs instead of a checked step samples at its clock.
+        self.clock = self.paint_keep.cycles.check_clock.take().unwrap_or_else(|| self.wall_clock().unwrap_or(self.clock + elapsed));
         if self.wall_start.is_none() {
             crate::video::headless_frame(self.clock);
             // Fake recorders publish this frame's level to bound meters, drawn this frame.
@@ -775,7 +776,7 @@ impl<S: 'static> Runtime<S> {
         self.scene.set_time(self.t);
         self.caught_up += step as f32;
         self.step_growth(step as f32);
-        self.step_scroll(step as f32);
+        self.step_scroll_by(step as f32, true);
     }
 
     pub(super) fn step_motion(&mut self, dt: f64, instant_scroll: bool) -> bool {
@@ -869,6 +870,7 @@ impl<S: 'static> Runtime<S> {
         animating |= source(self.scale_frame.is_some() || self.pixel_snap.easing(), AnimSource::SCALE_SETTLE);
         animating |= source(self.videos_active, AnimSource::VIDEO);
         animating |= source(self.draw_text_flights(), AnimSource::TEXT_FLIGHT);
+        animating |= source(self.text_fill_due(), AnimSource::TEXT_FILL);
         if !animating && raster_check::on() {
             self.check_resting_raster();
         }
