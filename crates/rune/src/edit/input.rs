@@ -430,6 +430,27 @@ impl TextEdit {
         EditOutcome::default()
     }
 
+    /// Writes `text` over the selection as the page's own field changed it (the web's
+    /// `inputType`): typing, a line break and a deletion join the open undo step as their keys
+    /// do; anything else (a paste, a drop, a spelling fix) is a step of its own. `was` is the
+    /// selection before: a deletion from a caret starts there, as its key's does, so a run of
+    /// them is one step too.
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    pub(crate) fn browser_input(&mut self, text: &str, input: &str, was: (usize, usize)) {
+        let kind = match input {
+            "insertText" | "insertCompositionText" if text.contains(['\r', '\n']) => EditKind::LineBreak,
+            "insertText" | "insertCompositionText" => EditKind::Text,
+            "deleteContentBackward" | "deleteContentForward" => EditKind::Delete,
+            _ if input.starts_with("deleteWord") || input.starts_with("deleteSoftLine") || input.starts_with("deleteHardLine") => EditKind::DeleteRun,
+            _ => EditKind::Other,
+        };
+        let (a, b) = self.range();
+        if matches!(kind, EditKind::Delete | EditKind::DeleteRun) && was.0 == was.1 && (was.0 == a || was.0 == b) {
+            (self.anchor, self.focus) = was;
+        }
+        self.replace((a, b), text, kind);
+    }
+
     /// Writes a composition's text over the selection as typing: it joins the open undo step,
     /// as each Hangul syllable or kana phrase a person commits is part of what they type, the
     /// way a browser's field groups them.

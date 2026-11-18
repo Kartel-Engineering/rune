@@ -911,7 +911,7 @@ impl<S: 'static> Browser<S> {
             }
         }
         r.rt.refuse_file_dialog("native file dialogs are unsupported on web");
-        if !tick { r.sync_input(false); }
+        if !tick { r.sync_input(input::Activate::No); }
         r.cursor.apply(window, r.rt.cursor(), r.rt.pointer().is_some());
         if !r.rt.surfaces.is_empty() {
             error("native video surfaces are unsupported on web", window.canvas().as_ref(), r.embedded, r.document);

@@ -93,7 +93,33 @@ export async function inputSmoke(page, url) {
     await settle();
     assert.equal((await snapshot()).shortcuts, 2);
 
+    // Typing through the page's field is one undo step, as typing keys is, and redo brings it back.
     await page.touchscreen.tap(100, 36);
+    await page.keyboard.press('Control+End');
+    const typedFrom = await snapshot();
+    await page.keyboard.type(' typed run');
+    await settle();
+    assert.equal((await snapshot()).plain, typedFrom.plain + ' typed run');
+    assert.equal((await snapshot()).undo, typedFrom.undo + 1, 'a typed run is one undo step');
+    await page.keyboard.press('Control+z');
+    await settle();
+    assert.equal((await snapshot()).plain, typedFrom.plain);
+    await page.keyboard.press('Control+Shift+z');
+    await settle();
+    assert.equal((await snapshot()).plain, typedFrom.plain + ' typed run');
+
+    // A key on the canvas while a field has Rune's focus hands the page's field the browser's
+    // focus, and leaves no modifier held: the next key on the canvas types.
+    const canvasFocus = () => page.evaluate(() => document.querySelector('canvas').focus());
+    await canvasFocus();
+    await page.keyboard.press('Control');
+    assert.equal(await page.evaluate(() => document.activeElement.tagName), 'TEXTAREA');
+    await canvasFocus();
+    await page.keyboard.type('x');
+    await settle();
+    assert.equal((await snapshot()).plain, typedFrom.plain + ' typed runx', 'a held Control would make x a cut');
+    assert.equal(await page.evaluate(() => document.activeElement.tagName), 'TEXTAREA');
+
     await page.touchscreen.tap(300, 500); // Background tap dismisses the editor.
     assert.equal(await page.evaluate(() => document.activeElement.tagName), 'CANVAS');
     // Dispatch a burst in one JS turn: movement/wheels must wait for rAF, not run frames.
@@ -122,5 +148,5 @@ export async function inputSmoke(page, url) {
     assert.equal((await snapshot()).visible, true);
     console.log(JSON.stringify({ inputRegressions: 'passed', checks: ['stable editor focus', 'recomposition range',
         'beforeinput Enter', 'multiline vs single-line', 'password sink and deletion', 'Tab to canvas',
-        'Escape shortcuts', 'outside dismiss', 'coalesced pointer frames', 'visibility', 'app title', 'nonfatal window requests'] }));
+        'Escape shortcuts', 'typed run undo', 'modifier hand-over', 'outside dismiss', 'coalesced pointer frames', 'visibility', 'app title', 'nonfatal window requests'] }));
 }

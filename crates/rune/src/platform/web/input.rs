@@ -14,6 +14,8 @@ extern "C" {
     #[wasm_bindgen(js_name = syncScrollX)]
     fn sync_scroll_x(handle: &JsValue, path: &str, x: f32);
     fn activate(handle: &JsValue);
+    #[wasm_bindgen(js_name = activateSoon)]
+    fn activate_soon(handle: &JsValue);
     #[wasm_bindgen(js_name = syncPage)]
     fn sync_page(handle: &JsValue, height: f32, focused: bool);
     #[wasm_bindgen(js_name = presented)]
@@ -118,7 +120,7 @@ impl Drop for Bridge {
 }
 
 impl<S: 'static> Running<S> {
-    pub(super) fn sync_input(&mut self, focus: bool) {
+    pub(super) fn sync_input(&mut self, focus: Activate) {
         if self.rt.web_context(&mut self.input.mirror) {
             let m = &self.input.mirror;
             sync(&self.input.handle, &m.key, &m.text, m.base, m.anchor, m.focus, m.secure);
@@ -185,7 +187,11 @@ impl<S: 'static> Running<S> {
             }
             self.input.scroll_x = next;
         }
-        if focus { activate(&self.input.handle); }
+        match focus {
+            Activate::No => {}
+            Activate::Now => activate(&self.input.handle),
+            Activate::AfterKey => activate_soon(&self.input.handle),
+        }
     }
 
     /// The page's field takes the focused field's context from the model now (web_edit_context);
@@ -203,7 +209,7 @@ impl<S: 'static> Running<S> {
     /// when it moves the band (the browser's compositor scrolls the pixels Rune already drew).
     pub(super) fn input_event(&mut self, event: &mut serde_json::Value, window: &Arc<Window>) -> bool {
         self.full_redraw = true;
-        let mut activate = false;
+        let mut activate = Activate::No;
         // What a person typed or pressed through the page's own elements is input too, for
         // `rune::last_input` (an app holds background work while someone types).
         if matches!(event["kind"].as_str(), Some("edit" | "preedit" | "selection" | "key" | "paste" | "a11y_press" | "a11y_link")) {
@@ -273,7 +279,7 @@ impl<S: 'static> Running<S> {
                     self.rt.web_secure(event["key"].as_str().unwrap_or_default(), text);
                 }
             }
-            Some("key") => activate = self.rt.web_key(event),
+            Some("key") => if self.rt.web_key(event) { activate = Activate::Now },
             Some("a11y_press" | "a11y_link") => { let _ = self.rt.web_a11y_action(event); }
             // The page's menu (`showMenu`) was picked from or dismissed.
             Some("menu") => {
@@ -285,7 +291,7 @@ impl<S: 'static> Running<S> {
             Some("a11y_due") => {
                 self.input.a11y_first = First::Built;
                 self.input.a11y_at = None;
-                self.sync_input(false);
+                self.sync_input(Activate::No);
                 return false;
             }
             // The page scrolled: draw the band in view, and hover what is now under the pointer.
@@ -326,7 +332,7 @@ impl<S: 'static> Running<S> {
 
     pub(super) fn window_input(&mut self, event: &WindowEvent, window: &Arc<Window>) -> bool {
         let scale = window.scale_factor() as f32;
-        let mut activate = false;
+        let mut activate = Activate::No;
         let mut immediate = false;
         match event {
             WindowEvent::ModifiersChanged(mods) => { self.input.mods = mods.state(); return false; }
@@ -344,7 +350,7 @@ impl<S: 'static> Running<S> {
                 match (button, state) {
                     (MouseButton::Left, ElementState::Pressed) => {
                         self.rt.pointer_down(x, y);
-                        activate = true;
+                        activate = Activate::Now;
                         // A press into a text field: the field takes focus now (a key may follow
                         // before the next frame, and a phone's keyboard opens only inside the
                         // press); the frame waits for the display's.
@@ -400,8 +406,10 @@ impl<S: 'static> Running<S> {
                 }
                 // Any key that puts Rune's focus in a field (Tab, or a shortcut such as the
                 // prompt's) hands the page's own field the browser's focus, so a screen reader is
-                // in a real text field with its text, not on the canvas's stand-in for it.
-                activate = pressed;
+                // in a real text field with its text, not on the canvas's stand-in for it. After
+                // the key: winit reports the key's modifiers after the key, and the canvas's blur
+                // clears them, so a hand-over inside the key left Ctrl held for good.
+                if pressed { activate = Activate::AfterKey; }
                 if let winit::keyboard::PhysicalKey::Code(key) = event.physical_key {
                     self.rt.physical_with_fallback(crate::PhysicalInput::Key { key, mods: modifiers(self.input.mods),
                         pressed: event.state == ElementState::Pressed, repeat: event.repeat }, logical);
@@ -417,7 +425,7 @@ impl<S: 'static> Running<S> {
                 // returns. In a page only a tap that left something focused needs it; anything else
                 // would focus the canvas and drop the reader's selection.
                 if matches!(touch.phase, TouchPhase::Ended) {
-                    activate = !self.input.document || self.rt.has_focus();
+                    if !self.input.document || self.rt.has_focus() { activate = Activate::Now; }
                     immediate = true;
                 }
             }
@@ -438,6 +446,11 @@ impl<S: 'static> Running<S> {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum First { Unasked, Waiting, Built }
+
+/// Whether a handled event gives the browser's focus to the page's field (or the canvas): not,
+/// inside the event (a press, which a phone's keyboard needs), or once the key is handled.
+#[derive(Clone, Copy)]
+pub(super) enum Activate { No, Now, AfterKey }
 
 fn modifiers(mods: ModifiersState) -> crate::Mods {
     crate::Mods { shift: mods.shift_key(), alt: mods.alt_key(), ctrl: mods.control_key(),

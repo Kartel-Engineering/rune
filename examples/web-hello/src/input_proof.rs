@@ -4,14 +4,14 @@ use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen(inline_js = "
 export function enabled() { return new URLSearchParams(location.search).has('input-proof'); }
-export function report(plain, display, single, secretLength, submits, shortcuts, visible) {
-    window.__inputProof = { plain, display, single, secretLength, submits, shortcuts, visible,
+export function report(plain, display, single, secretLength, submits, shortcuts, visible, undo) {
+    window.__inputProof = { plain, display, single, secretLength, submits, shortcuts, visible, undo,
         polls: (window.__inputProof?.polls ?? 0) + 1 };
 }
 ")]
 extern "C" {
     pub fn enabled() -> bool;
-    fn report(plain: &str, display: &str, single: &str, secret_length: usize, submits: u32, shortcuts: u32, visible: bool);
+    fn report(plain: &str, display: &str, single: &str, secret_length: usize, submits: u32, shortcuts: u32, visible: bool, undo: usize);
 }
 
 struct State {
@@ -47,7 +47,7 @@ pub fn run() {
     let mut spec = AppSpec::new("Input proof", (390.0, 760.0), State::default, view);
     spec.poll = Some(|s, _, _| {
         report(&s.plain.text, &s.plain.display().0, &s.single.text, s.secret.text.chars().count(),
-            s.submits, s.shortcuts, s.handle.as_ref().is_some_and(AppHandle::is_visible));
+            s.submits, s.shortcuts, s.handle.as_ref().is_some_and(AppHandle::is_visible), s.plain.history_len().0);
         false
     });
     spec.on_key = Some(|s, event, _| {

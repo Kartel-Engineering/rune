@@ -119,9 +119,10 @@ export function mount(canvas, callback, embedded, fitHeight, page) {
         target.addEventListener(name, handler, options);
         h.listeners.push(() => target.removeEventListener(name, handler, options));
     };
-    function changed(preedit = false) {
+    // `input` is the edit's `inputType`, so typing joins the open undo step as a key does.
+    function changed(preedit = false, input = '') {
         const backward = textarea.selectionDirection === 'backward';
-        send({ kind: preedit ? 'preedit' : 'edit', key: h.key, base: h.base, expected: h.value,
+        send({ kind: preedit ? 'preedit' : 'edit', input, key: h.key, base: h.base, expected: h.value,
             ...replacement(h.value, textarea.value, preedit ? h.composition : '', textarea.selectionEnd),
             anchor: backward ? textarea.selectionEnd : textarea.selectionStart,
             focus: backward ? textarea.selectionStart : textarea.selectionEnd });
@@ -131,7 +132,7 @@ export function mount(canvas, callback, embedded, fitHeight, page) {
     listen(textarea, 'input', event => {
         // No Rune field has the keyboard: nothing to edit, so the field stays empty.
         if (!h.key) { textarea.value = ''; return; }
-        changed(h.composing || event.isComposing);
+        changed(h.composing || event.isComposing, event.inputType);
     });
     listen(textarea, 'compositionstart', () => { h.composing = true; h.composition = ''; });
     listen(textarea, 'compositionupdate', event => {
@@ -139,7 +140,7 @@ export function mount(canvas, callback, embedded, fitHeight, page) {
         queueMicrotask(() => { if (!h.disposed && h.composing) changed(true); });
     });
     listen(textarea, 'compositionend', () => {
-        changed();
+        changed(false, 'insertCompositionText');
         h.composing = false; h.composition = '';
         send({ kind: 'sync' });
     });
@@ -937,6 +938,11 @@ function dropStatic(h) {
 function deferStatic(h) {
     if (h.staticTimer || h.swapped || !h.presented || h.disposed) return;
     h.staticTimer = setTimeout(() => { h.staticTimer = 0; if (!h.disposed) dropStatic(h); }, 150);
+}
+
+// `activate` once the event that asked for it is handled.
+export function activateSoon(h) {
+    queueMicrotask(() => { if (!h.disposed) activate(h); });
 }
 
 export function activate(h) {

@@ -349,6 +349,7 @@ impl<S: 'static> Runtime<S> {
                 let Some((a, b)) = byte_at(expected, start).zip(byte_at(expected, end)) else { return EditOutcome::default() };
                 if a > b { return EditOutcome::default(); }
                 edit.ime(&Ime::Preedit(String::new(), None, Vec::new()));
+                let was = (edit.anchor, edit.focus);
                 let raw = (base + a, base + b);
                 edit.anchor = raw.0; edit.focus = raw.1;
                 edit.snap_to_pills();
@@ -358,7 +359,7 @@ impl<S: 'static> Runtime<S> {
                     edit.ime(&Ime::Preedit(text.to_owned(), Some((text.len(), text.len())), Vec::new()));
                     return EditOutcome::default();
                 }
-                edit.insert(text);
+                edit.browser_input(text, event["input"].as_str().unwrap_or_default(), was);
                 if snapped { return EditOutcome::default(); }
             }
             if let Some((anchor, focus)) = number("anchor").zip(number("focus"))
