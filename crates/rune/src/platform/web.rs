@@ -451,9 +451,13 @@ fn canvas_config(gpu: &Gpu, surface: &wgpu::Surface<'static>, size: (u32, u32), 
     config.present_mode = wgpu::PresentMode::Fifo;
     let caps = surface.get_capabilities(&gpu.adapter);
     config.usage |= caps.usages & wgpu::TextureUsages::COPY_SRC;
-    // A WebGPU canvas can be copied into (wgpu names only its render use): a loop-only step's
-    // frame is the last one, kept, with its dots redrawn (`Renderer::arm_cycle`).
-    if gpu.adapter.get_info().backend == wgpu::Backend::BrowserWebGpu { config.usage |= wgpu::TextureUsages::COPY_DST; }
+    // A WebGPU canvas can be copied into and from (wgpu names only its render use): a loop-only
+    // step's frame is the last one, kept, with its dots redrawn (`Renderer::arm_cycle`), and a
+    // backdrop blur copies what is drawn under it (`ActivePass::split`). WebGPU lets a canvas
+    // take any usage its format has, and every canvas format has both copies.
+    if gpu.adapter.get_info().backend == wgpu::Backend::BrowserWebGpu {
+        config.usage |= wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::COPY_SRC;
+    }
     // A canvas can always be copied from; the hand-over's drift count needs that.
     if drift_wanted() { config.usage |= wgpu::TextureUsages::COPY_SRC; }
     let is_gl = gpu.adapter.get_info().backend == wgpu::Backend::Gl;
