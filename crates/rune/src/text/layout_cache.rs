@@ -36,7 +36,7 @@ pub(super) struct Entry<T> {
     /// About how many heap bytes it holds.
     pub(super) cost: u32,
     /// The [`shape_key`](super::shape_key) it lays out, or 0 for a run.
-    shape: u64,
+    pub(super) shape: u64,
 }
 
 impl<T> Entry<T> {

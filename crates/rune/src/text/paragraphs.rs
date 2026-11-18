@@ -588,8 +588,12 @@ impl TextSystem {
         }
         let g = self.generation;
         if let Some(e) = self.paragraphs.get_mut(&key) {
-            e.used = g;
-            return TextLayout::Paragraphs(e.value.clone());
+            let hit = e.value.clone();
+            // Its layouts at the other widths a measure asks for stay used too: a commit that
+            // only moves the caret asks at one width, and the next key would break every
+            // paragraph again at the min-content width once that layout went stale.
+            for e in self.paragraphs.values_mut().filter(|e| e.shape == whole) { e.used = g; }
+            return TextLayout::Paragraphs(hit);
         }
         // Measuring asks at more than one width: the last text's layout at this one, when it
         // was laid out there too, keeps its paragraphs without breaking them again.
