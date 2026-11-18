@@ -10,10 +10,15 @@
 //!
 //! Every pane sits at fixed points, so a page drawn from `solid-glass.css` with the same
 //! layout can be compared pixel for pixel.
+//!
+//! A frame blurs at most `rune::MAX_BACKDROP_BLURS` (4) panes. The gallery spends them on the
+//! panel, the card, the popover and the list, and asks no blur of the rest: the menu is the
+//! popover's material again (96% fill, the page shows through it by 5 of 255), and the buttons
+//! sit on the bare page, where a blur changes nothing.
 
 use rune::{AppSpec, Color, Cx, El, TextEdit, TextStyle, col, el, row, text};
 use rune_kit::{Button, ButtonVariant, State, Switch, TextInput};
-use rune_theme_solid_glass::{Look, Pane, apply, kit};
+use rune_theme_solid_glass::{Look, Material, Pane, apply, kit};
 
 #[derive(Default)]
 struct Gallery {
@@ -59,6 +64,8 @@ fn view(s: &Gallery, cx: &mut Cx<Gallery>) -> El {
     };
     let t = look.tokens();
     let m = |p: Pane| look.material(p);
+    // Past the frame's four blurs (see the module docs).
+    let unblurred = |p: Pane| Material { blur: 0.0, ..m(p) };
     let k = kit(look.dark);
     let pane = |p: Pane, rect: [f32; 4], r: f32, name: &str| {
         at(apply(el(), &m(p)), rect, r)
@@ -90,7 +97,7 @@ fn view(s: &Gallery, cx: &mut Cx<Gallery>) -> El {
     .child(row_item("Experiments", 40.0, true))
     .child(row_item("Draft", 72.0, false));
     let menu = at(
-        apply(el(), &m(Pane::Popover)),
+        apply(el(), &unblurred(Pane::Popover)),
         [240.0, 160.0, 192.0, 108.0],
         14.0,
     )
@@ -100,13 +107,17 @@ fn view(s: &Gallery, cx: &mut Cx<Gallery>) -> El {
     .child(row_item("Delete", 72.0, false));
     // CSS boxes with a 1 pt border: the element is the padding box (see the crate docs).
     let primary = |p: Pane, x: f32, name: &str| {
-        at(apply(el(), &m(p)), [x + 1.0, 293.0, 86.0, 30.0], 10.2)
-            .center()
-            .child(label(name, t.primary_foreground))
-            .key(name.to_lowercase())
+        at(
+            apply(el(), &unblurred(p)),
+            [x + 1.0, 293.0, 86.0, 30.0],
+            10.2,
+        )
+        .center()
+        .child(label(name, t.primary_foreground))
+        .key(name.to_lowercase())
     };
     let glass = at(
-        apply(el(), &m(Pane::Control)),
+        apply(el(), &unblurred(Pane::Control)),
         [324.0, 292.0, 88.0, 32.0],
         11.2,
     )
@@ -189,32 +200,41 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rune::motion_gate::{Run, check::paint::S_BACKDROP};
     use rune::{Env, Runtime, render::KIND_BACKDROP_BLUR};
 
+    /// Every blur the gallery asks for draws: it asks for no more than a frame blurs.
     #[test]
-    fn four_panes_blur_and_the_opaque_scene_blurs_none() {
-        for opaque in [false, true] {
-            let mut rt = Runtime::new(
-                Gallery {
-                    opaque,
-                    ..Gallery::default()
-                },
-                view,
-                SIZE,
-                Env::new(true, 2.0),
-            );
-            rt.frame(0.0);
-            let blurs = rt
+    fn every_blur_the_gallery_asks_for_draws() {
+        for (dark, opaque) in [(false, false), (true, false), (true, true)] {
+            let gallery = Gallery {
+                opaque,
+                ..Gallery::default()
+            };
+            let mut run = Run::new(Runtime::new(gallery, view, SIZE, Env::new(dark, 2.0)), 60.0);
+            run.step();
+            let asked = run
+                .rec
+                .tracks
+                .iter()
+                .filter(|t| t.paint_at(0).is_some_and(|p| p.sizes[S_BACKDROP] > 0.0))
+                .count();
+            let drawn = run
+                .rt
                 .instances
                 .iter()
                 .filter(|i| i.params[1] == KIND_BACKDROP_BLUR)
                 .count();
             assert_eq!(
-                blurs,
+                asked,
                 if opaque { 0 } else { rune::MAX_BACKDROP_BLURS },
-                "opaque {opaque}"
+                "dark {dark}, opaque {opaque}"
             );
-            assert!(rt.find("row-Experiments").is_some() && rt.find("kit").is_some());
+            assert_eq!(
+                drawn, asked,
+                "dark {dark}, opaque {opaque}: a blur past the cap draws only its fill"
+            );
+            assert!(run.rt.find("row-Experiments").is_some() && run.rt.find("kit").is_some());
         }
     }
 }

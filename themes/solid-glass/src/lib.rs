@@ -14,12 +14,16 @@
 //! an outer ring layer: size those one point in from the CSS box on each side, with corners one
 //! point smaller. CSS clips their fill to the padding box, and a Rune fill runs under a Rune
 //! border, so the ring keeps the hairline off the fill as CSS does.
+//!
+//! `Look { opaque: true }` is not the stylesheet's `[data-glass="opaque"]` rule, which drops the
+//! blur and keeps the translucent fills. It is `@media (prefers-reduced-transparency: reduce)`:
+//! no blur and the opaque fills that rule sets.
 
 use rune::{Color, El, Shadow, oklcha};
 use rune_kit::{Elevation, Kit, Radius};
 
 /// Light or dark, and whether panes give up their blur for opaque fills (CSS
-/// `prefers-reduced-transparency`, or a part of the page marked `data-glass="opaque"`).
+/// `prefers-reduced-transparency`; see the crate docs for `data-glass="opaque"`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Look {
     pub dark: bool,
@@ -98,8 +102,6 @@ pub struct Tokens {
     pub border: Color,
     /// `--input`, as a switch track that is off draws it (`dark:bg-input/80` in dark).
     pub input: Color,
-    /// `--destructive`
-    pub destructive: Color,
     /// `--glass-rim`
     pub glass_rim: Color,
     /// `--glass-inner`
@@ -178,7 +180,6 @@ fn light() -> Tokens {
         primary_foreground: ok(0.985, 0.0, 0.0, 1.0),
         border: ink(0.13),
         input: ink(0.15),
-        destructive: ok(0.577, 0.245, 27.325, 1.0),
         glass_rim: white(0.9),
         glass_inner: white(0.35),
         glass_edge: ok(0.38, 0.03, 265.0, 0.1),
@@ -228,7 +229,6 @@ fn dark() -> Tokens {
         primary_foreground: ok(0.18, 0.0, 0.0, 1.0),
         border: white(0.11),
         input: white(0.13 * 0.8),
-        destructive: ok(0.704, 0.191, 22.216, 1.0),
         glass_rim: white(0.16),
         glass_inner: white(0.04),
         glass_edge: white(0.06),
@@ -295,8 +295,7 @@ impl Look {
     pub fn tokens(self) -> Tokens {
         let mut t = if self.dark { dark() } else { light() };
         if self.opaque {
-            // ponytail: CSS only drops the blur under `data-glass="opaque"`; the opaque fills are
-            // its `prefers-reduced-transparency` ones, which is what "opaque" asks for.
+            // The `prefers-reduced-transparency` fills (see the crate docs).
             t.primary_solid = 1.0;
             [t.panel, t.card, t.popover, t.sidebar] = if self.dark {
                 [ok(0.19, 0.0, 0.0, 1.0), ok(0.225, 0.0, 0.0, 1.0), ok(0.22, 0.0, 0.0, 1.0), ok(0.13, 0.0, 0.0, 1.0)]
@@ -464,6 +463,10 @@ pub fn kit(dark: bool) -> Kit {
     c.pressed = t.glass_state_armed;
     c.knob = m(Pane::Knob).fill;
     c.knob_on = m(Pane::KnobOn).fill;
+    // The knob's own layers carry its rim and shade; the neutral kit's white sheen over the thumb
+    // would turn the dark ink knob grey.
+    c.depth_top = Color::TRANSPARENT;
+    c.depth_bottom = Color::TRANSPARENT;
     c.scrim = Color::BLACK.alpha(0.1);
     let mut e = Elevation::default().with_input(m(Pane::Field).layers);
     e.raised = m(Pane::Panel).layers;
