@@ -1,0 +1,13 @@
+[package]
+name = "rune-theme-solid-glass"
+version = "0.0.1"
+edition.workspace = true
+license.workspace = true
+description = "Solid Glass (smoky glass panes, lit at the edge) as data and a rune-kit theme."
+
+[dependencies]
+rune = { path = "../../crates/rune", default-features = false }
+rune-kit = { path = "../../crates/rune-kit" }
+
+[lints]
+workspace = true
