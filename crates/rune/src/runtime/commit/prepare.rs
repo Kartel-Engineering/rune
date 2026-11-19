@@ -49,6 +49,7 @@ impl<S: 'static> Runtime<S> {
             system_accent: self.system_accent,
             system_contrast: self.system_contrast,
             system_increased_contrast: self.system_increased_contrast,
+            on_gpu: self.on_gpu,
             system_scroll_bars: self.scroll_bars.state,
             reduced_motion: self.reduced_motion,
             time_scale: self.time_scale,

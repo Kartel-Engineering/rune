@@ -96,6 +96,8 @@ impl<T: 'static> Overlay<T> {
         if self.surface.live().is_none() || self.renderer.is_none() || self.gpu.is_none() {
             return false;
         }
+        // An overlay draws only on the GPU (`Cx::on_gpu`).
+        self.rt.set_on_gpu(true);
         // `sync_occlusion` below reads, once a turn, the panel hosting the surface: the window
         // the acquire would check again.
         #[cfg(target_os = "macos")]

@@ -78,6 +78,14 @@ impl<S: 'static> Runtime<S> {
             self.dirty = true;
         }
     }
+    /// What [`Cx::on_gpu`] reports. Hosts set it as a frame presents on a GPU device and clear
+    /// it when that device is lost; a change re-runs the view.
+    pub fn set_on_gpu(&mut self, on: bool) {
+        if on != self.on_gpu {
+            self.on_gpu = on;
+            self.dirty = true;
+        }
+    }
     pub fn set_system_reduced_motion(&mut self, reduced: bool) {
         if self.system_reduced_motion != reduced {
             self.system_reduced_motion = reduced;

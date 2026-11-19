@@ -106,6 +106,8 @@ impl<S: 'static> Host<S> {
         // before this frame, or waits out a retry of its own (`SurfaceRetries`) and then gives
         // them up. Neither can give a drawable, and wgpu panics asking one for it.
         if !self.replace_lost_surface() { return; }
+        // This frame draws on the GPU: its view reads so (`Cx::on_gpu`).
+        self.rt.set_on_gpu(true);
         // A clip's layer began or stopped showing: the UI's swap chain composites premultiplied
         // only while one does (`video_layer`), made again before this frame draws.
         #[cfg(target_os = "windows")]

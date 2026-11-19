@@ -60,6 +60,7 @@ pub struct Cx<S> {
     pub(super) system_accent: crate::SystemAccent,
     pub(super) system_contrast: Option<crate::SystemContrast>,
     pub(super) system_increased_contrast: bool,
+    pub(super) on_gpu: bool,
     pub(super) system_scroll_bars: crate::platform::scroll_bars::SystemScrollBars,
     pub(super) system_reduced_motion: bool,
     pub(super) reduced_motion: bool,
@@ -86,6 +87,7 @@ impl<S> Cx<S> {
             system_accent: self.system_accent,
             system_contrast: self.system_contrast,
             system_increased_contrast: self.system_increased_contrast,
+            on_gpu: self.on_gpu,
             system_scroll_bars: self.system_scroll_bars,
             system_reduced_motion: self.system_reduced_motion, reduced_motion: self.reduced_motion, time_scale: self.time_scale, zoom: self.zoom,
             caret: self.caret.clone(), caret_read: self.caret_read.clone(),
@@ -270,6 +272,15 @@ impl<S> Cx<S> {
     /// it while keeping its own colours. A change re-runs the view.
     pub fn system_increased_contrast(&self) -> bool {
         self.system_increased_contrast
+    }
+    /// Whether this window's frames draw on a GPU device: true once a frame presented on one,
+    /// false while it draws on the CPU (a web page's first seconds before WebGPU takes over, a
+    /// Windows window's first frames, a browser with no WebGPU) and again after its device is
+    /// lost. An effect the CPU painter draws slowly, such as a backdrop blur, can wait for it.
+    /// The view re-runs when it changes; a `memo` closure that reads it needs it in its version.
+    /// Headless runs report false unless a test sets it ([`Runtime::set_on_gpu`](crate::Runtime::set_on_gpu)).
+    pub fn on_gpu(&self) -> bool {
+        self.on_gpu
     }
     /// The host's OS accessibility preference, independent of this commit's override.
     pub fn system_reduced_motion(&self) -> bool {

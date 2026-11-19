@@ -458,6 +458,7 @@ impl<S: 'static> Host<S> {
         let lost = self.gpu.as_ref().is_none_or(|(gpu, _)| gpu.is_lost());
         let surface_missing = self.win.as_ref().is_some_and(|w| !w.surface_ok || w.surface.is_none());
         if !lost && !surface_missing { return true; }
+        if lost { self.rt.set_on_gpu(false); }
         let now = Instant::now();
         let Some(step) = self.win.as_mut().map(|w| w.surface_retries.attempt()) else { return false };
         if step == SurfaceStep::GiveUp {

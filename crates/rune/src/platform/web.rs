@@ -634,6 +634,7 @@ impl<S: 'static> Browser<S> {
         };
         web_sys::console::warn_1(&format!("rune: the GPU device was lost ({why}); the page draws on the CPU").into());
         crate::marks::mark("web.gpu.lost");
+        r.rt.set_on_gpu(false);
         side.gpu.device.destroy();
         crate::render::cpu_boot::attach_text(&mut r.rt.text.atlas);
         r.rt.text.atlas.refill_gpu_masks();
@@ -738,7 +739,7 @@ impl<S: 'static> Browser<S> {
             Some((gpu, surface)) => {
                 let (lost, proxy) = (self.lost.clone(), self.proxy.clone());
                 match gpu_side(gpu, surface, physical, &mut rt, move |why| { *lost.borrow_mut() = Some(why); let _ = proxy.send_event(Wake::App); }) {
-                    Ok(side) => Draw::Gpu(side),
+                    Ok(side) => { rt.set_on_gpu(true); Draw::Gpu(side) }
                     Err(e) => { error(&e, window.canvas().as_ref(), self.embedded, self.document); self.end(event_loop); return; }
                 }
             }
@@ -831,6 +832,7 @@ impl<S: 'static> Browser<S> {
             });
         }
         r.draw = Draw::Gpu(side);
+        r.rt.set_on_gpu(true);
         crate::marks::mark("web.handover.done");
         if let Some(window) = &self.window { window.request_redraw(); }
     }
