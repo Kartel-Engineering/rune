@@ -174,6 +174,28 @@ impl El {
         }
         self
     }
+    /// The height of an empty line between two lines with words in a multi-line [`text_input`],
+    /// in lines, by the [`Block`](crate::Block)s above and below it: a blank line between two
+    /// paragraphs at 0.55 sets them apart by about half a line, as CSS's `margin` between `<p>`s
+    /// does, and the text keeps its blank line. A run of empty lines, an empty line a Shift+Return
+    /// break starts or ends, and an empty list item, quote, code or heading line keep their full
+    /// line. The caret in the short line is as tall as it; a click, Up and Down, and a selection
+    /// follow it, and typing in it gives it its full line at once. A NaN or 1 is a full line; any
+    /// other height is 0.1 to 10 lines. Right-to-left fields keep their lines, as with
+    /// [`El::block_space_above`]. Unset, an empty line is a full line, as before.
+    ///
+    /// ```ignore
+    /// text_input(&s.draft, body).blank_line_height(|_, _| 0.55)
+    /// ```
+    pub fn blank_line_height(
+        mut self,
+        lines: fn(crate::edit::Block, crate::edit::Block) -> f32,
+    ) -> Self {
+        if let Some(t) = &mut self.text {
+            t.cold.blank_line_height = Some(lines);
+        }
+        self
+    }
     /// The chip colour of each [`Mark::Pill`](crate::Mark::Pill) in a [`text_input`], and its
     /// label and icon colour (`None`: the text's). The chip defaults to the rich style's link
     /// colour at 20% opacity.

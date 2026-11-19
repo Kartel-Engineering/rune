@@ -137,6 +137,8 @@ pub(crate) struct TextCold {
     pub(crate) rich_style: Option<crate::edit::RichStyle>,
     /// See [`El::block_space_above`](crate::El::block_space_above).
     pub(crate) block_space_above: Option<fn(crate::edit::Block) -> f32>,
+    /// See [`El::blank_line_height`](crate::El::blank_line_height).
+    pub(crate) blank_line_height: Option<fn(crate::edit::Block, crate::edit::Block) -> f32>,
     pub(crate) secure_revealed: bool,
 }
 
@@ -163,6 +165,7 @@ impl Empty for TextCold {
         pill_colors: None,
         rich_style: None,
         block_space_above: None,
+        blank_line_height: None,
         secure_revealed: false,
     };
 }
@@ -307,7 +310,8 @@ impl TextSpec {
         }
     }
 
-    /// Whether [`El::block_space_above`](crate::El::block_space_above) spaces its paragraphs:
+    /// Whether [`El::block_space_above`](crate::El::block_space_above) or
+    /// [`El::blank_line_height`](crate::El::blank_line_height) spaces its paragraphs:
     /// set, on a field whose paragraphs each take their own direction, or one left to right
     /// with no right-to-left text.
     pub(crate) fn block_spaced(&self) -> bool {
@@ -316,7 +320,7 @@ impl TextSpec {
         // one layout's around a right-to-left run (a caret a row up, a selection that loses a
         // line). Such a field is a stack now with no space set too: check those with a space in
         // `text/paragraphs.rs`, then drop this check.
-        self.cold.block_space_above.is_some()
+        (self.cold.block_space_above.is_some() || self.cold.blank_line_height.is_some())
             && (matches!(self.dir, TextDir::Plaintext(_))
                 || self.paragraphs_flow() == Some(crate::el::Flow::Ltr) && !crate::el::direction::has_rtl(&self.content))
     }

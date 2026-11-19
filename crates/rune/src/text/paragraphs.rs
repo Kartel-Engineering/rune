@@ -20,6 +20,7 @@ use crate::el::{Direction, Flow, TextSpec};
 
 mod keying;
 mod lazy;
+mod spacing;
 use keying::{Found, Runs, count_newlines, flow_of, key_paragraphs, next_line_start, reuse_keys, with_isolates};
 pub(crate) use keying::{LineScan, common_end, common_start};
 pub(crate) use lazy::{AsciiLine, Lazy};
@@ -600,13 +601,7 @@ impl TextSystem {
         if !spec.by_paragraph(input) {
             return TextLayout::Single(self.layout_for_spec(spec, scale, max_width, align));
         }
-        // A field spaced by block whose spaces all come to 0 lays out exactly as with none set.
-        let mut spaces: Vec<f32> = if spec.block_spaced() {
-            (0..spec.content.split('\n').count()).map(|k| space_above(spec, k, scale)).collect()
-        } else {
-            Vec::new()
-        };
-        if spaces.iter().all(|&s| s == 0.0) { spaces.clear(); }
+        let spaces = spacing::spacing(spec, scale);
         let forced = spec.paragraphs_flow();
         // One paragraph and no pills, as most drafts are: one layout in its own direction.
         if !spec.by_line && spec.cold.pills.is_empty() && !spec.content.contains('\n') {
@@ -625,7 +620,7 @@ impl TextSystem {
         let mut key = hash::break_key(whole ^ PARAGRAPHS, max_width, align, indented) ^ pretty_bit;
         if !spaces.is_empty() {
             let mut h = hash::KeyHasher::default();
-            (key, spaces.iter().map(|s| s.to_bits()).collect::<Vec<_>>()).hash(&mut h);
+            (key, spaces.iter().flat_map(|s| s.map(f32::to_bits)).collect::<Vec<_>>()).hash(&mut h);
             key = h.finish();
         }
         let g = self.generation;
@@ -664,7 +659,7 @@ impl TextSystem {
     /// before an edit and after it. A paragraph is the same when its words, the spans and pills
     /// over them that shape them, its block and its direction are.
     #[allow(clippy::too_many_arguments)]
-    fn lay_out_paragraphs(&mut self, spec: &TextSpec, input: bool, scale: f32, max_width: Option<f32>, align: Alignment, (whole, cache_key): (u64, u64), spaces: &[f32], prev: Option<&ParagraphLayout>, other: Option<&ParagraphLayout>) -> (ParagraphLayout, usize) {
+    fn lay_out_paragraphs(&mut self, spec: &TextSpec, input: bool, scale: f32, max_width: Option<f32>, align: Alignment, (whole, cache_key): (u64, u64), spaces: &[[f32; 2]], prev: Option<&ParagraphLayout>, other: Option<&ParagraphLayout>) -> (ParagraphLayout, usize) {
         let (content, style) = (spec.content.as_str(), spec.style);
         let style_key = {
             let mut h = hash::KeyHasher::default();
@@ -792,7 +787,8 @@ impl TextSystem {
                 (Some(o), None) => (o.height, o.widths),
                 _ => (if a == b { layout.height().max(line) } else { layout.height() }, [layout.width(), layout.full_width()]),
             };
-            y += f64::from(spaces.get(k).copied().unwrap_or(0.0));
+            let [above, blank] = spaces.get(k).copied().unwrap_or_default();
+            y += f64::from(above);
             let want_frac = if layout.len() > 1 { (y - y.floor()) as f32 } else { 0.0 };
             let have_frac = match (kept, again) { (Some(o), None) => o.y_frac, _ => 0.0 };
             if (want_frac - have_frac).abs() > 1e-5 {
@@ -800,6 +796,9 @@ impl TextSystem {
                 self.layout_ids.build(&layout);
                 (height, widths) = (if a == b { layout.height().max(line) } else { layout.height() }, [layout.width(), layout.full_width()]);
             }
+            // An empty line's height is read again, kept or not: a neighbour that gained or lost
+            // its words changes it (`El::blank_line_height`).
+            if a == b { height = if blank > 0.0 { (layout.height().max(line) * blank).round() } else { layout.height().max(line) }; }
             let py = if want_frac != 0.0 { y.floor() as f32 } else { y.round() as f32 };
             (width, full_width) = (width.max(widths[0]), full_width.max(widths[1]));
             paragraphs.push(Paragraph { start: a, end: b, y: py, y_frac: want_frac, height, widths, flow, key, isolates, layout, shaped: true, lines: 1, run: false });
@@ -821,22 +820,4 @@ impl TextSystem {
         }));
         (ParagraphLayout { paragraphs, width, full_width, height: y as f32, max_width, align, whole, newline, blank_box, disjoint_spans, keyed, lazy }, fresh)
     }
-}
-
-/// The device px [`El::block_space_above`](crate::El::block_space_above) puts above paragraph
-/// `k`: none above the first, a line a soft break started, or a quote or code line under one of
-/// its own.
-fn space_above(spec: &TextSpec, k: usize, scale: f32) -> f32 {
-    let (Some(space), Some(j)) = (spec.cold.block_space_above, k.checked_sub(1)) else {
-        return 0.0;
-    };
-    let blocks = &spec.cold.blocks;
-    let block = blocks.get(k).copied().unwrap_or(Block::Paragraph);
-    let joined = matches!(block, Block::Quote | Block::Code) && blocks.get(j) == Some(&block);
-    if joined || spec.cold.soft_breaks.binary_search(&(k as u32)).is_ok() {
-        return 0.0;
-    }
-    // A negative or NaN space is none; one over 10,000 points, infinity too, is 10,000.
-    let px = (space(block).clamp(0.0, 10_000.0) * scale).round();
-    if px.is_finite() { px } else { 0.0 }
 }
