@@ -579,7 +579,7 @@ fn own_key<S: 'static>(rt: &Runtime<S>, i: usize) -> u64 {
 fn static_ok(n: &Node) -> bool {
     n.input.is_none() && !n.ime_cursor && n.scroll.is_none() && n.looping.is_none() && n.live.is_empty()
         && n.vis.surface.is_none() && n.material.is_none() && !n.vis_flags.cache() && !n.vis_flags.raise()
-        && n.vis.backdrop_blur <= 0.0 && n.vis.effect.is_none() && n.vis.pixels.is_none()
+        && n.vis.backdrop_blur <= 0.0 && n.vis.backdrop_lens.is_none() && n.vis.effect.is_none() && n.vis.pixels.is_none()
         && n.sticky.is_none() && n.above.is_none() && n.matched.is_none()
         && n.static_scale == 1.0 && !n.scale_track && n.vis.mark == 0
         && n.text.as_ref().is_none_or(|t| t.cold.links.is_empty() && t.cold.live.is_none() && t.cold.advance_in.is_none() && t.reveal < 0.0)

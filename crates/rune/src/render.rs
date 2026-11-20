@@ -51,6 +51,7 @@ mod variant;
 #[cfg(target_os = "macos")]
 mod windfoil_metallib;
 pub use backdrop_blur::MAX_BACKDROP_BLURS;
+pub use backdrop_blur::MAX_BACKDROP_LENSES;
 pub use first_use::{make_layer_blur, make_straight_alpha, precompiled_misses};
 pub use layers::LayerStats;
 /// The kinds the frame pass has a pipeline of its own for (`regen_dxbc` compiles each).

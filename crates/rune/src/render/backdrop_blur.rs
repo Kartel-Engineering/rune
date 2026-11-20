@@ -8,6 +8,11 @@ use super::*;
 
 /// Backdrop-blurred elements per frame. Elements past this many draw only their fill.
 pub const MAX_BACKDROP_BLURS: usize = 4;
+/// Elements with glass (`El::backdrop_lens`, blurred or not) per frame, apart from
+/// `MAX_BACKDROP_BLURS`. Elements past this many draw only their fill.
+pub const MAX_BACKDROP_LENSES: usize = 8;
+/// Uniform slots: one per blur and one per lens a frame can draw.
+const RECORDS: usize = MAX_BACKDROP_BLURS + MAX_BACKDROP_LENSES;
 
 /// Pyramid levels below the backdrop, the first at half resolution.
 const MIPS: u32 = 7;
@@ -49,6 +54,10 @@ struct Record {
     region: [f32; 4],
     /// The pyramid's window origin, aligned to a texel of level `levels`.
     origin: [f32; 2],
+    /// Drawn through glass (`El::backdrop_lens`).
+    lens: bool,
+    /// Blurred first: a lens without a blur reads the sharp copy and skips the pyramid.
+    blur: bool,
 }
 
 struct Pyramid {
@@ -70,6 +79,19 @@ pub(crate) const BLUR_WGSL: &str = include_str!("../backdrop_blur.wgsl");
 /// The composite's shader: the clip helpers, then `backdrop_composite.wgsl`.
 pub(crate) fn composite_wgsl() -> String { format!("{CLIP_WGSL}\n{}", include_str!("../backdrop_composite.wgsl")) }
 
+/// The lens composite's shader: the clip helpers, then `backdrop_lens.wgsl`.
+pub(crate) fn lens_wgsl() -> String { format!("{CLIP_WGSL}\n{}", include_str!("../backdrop_lens.wgsl")) }
+
+/// The glass composite (`El::backdrop_lens`), made on the first lensed record.
+struct Lens {
+    layout: wgpu::BindGroupLayout,
+    pipeline_layout: wgpu::PipelineLayout,
+    shader: wgpu::ShaderModule,
+    pipelines: Vec<(wgpu::TextureFormat, wgpu::RenderPipeline)>,
+    /// The blur result, levels and the pooled backdrop of each format.
+    binds: Vec<(wgpu::TextureFormat, wgpu::BindGroup)>,
+}
+
 fn composite_from_wgsl(device: &wgpu::Device, wgsl: &str) -> super::dxbc::Shaders {
     super::dxbc::Shaders::one(device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("backdrop blur composite"), source: wgpu::ShaderSource::Wgsl(wgsl.into()) }))
 }
@@ -90,6 +112,9 @@ pub(super) struct BackdropBlur {
     pyramid: Option<Pyramid>,
     /// The down pass into level 0, reading the pooled backdrop of each format.
     first: Vec<(wgpu::TextureFormat, wgpu::BindGroup)>,
+    /// The pooled backdrop of each format, for the lens.
+    views: Vec<(wgpu::TextureFormat, wgpu::TextureView)>,
+    lens: Option<Lens>,
     records: Vec<Record>,
 }
 
@@ -199,13 +224,13 @@ impl BackdropBlur {
         }).create_view(&Default::default());
         let uniforms = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("backdrop blur levels"),
-            size: (MAX_BACKDROP_BLURS * SLOTS) as u64 * SLOT,
+            size: (RECORDS * SLOTS) as u64 * SLOT,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         BackdropBlur {
             down, up, level_layout, result_layout, composite_layout, composite, composite_precompiled,
-            composites: Vec::new(), sampler, dummy, uniforms, pyramid: None, first: Vec::new(), records: Vec::new(),
+            composites: Vec::new(), sampler, dummy, uniforms, pyramid: None, first: Vec::new(), views: Vec::new(), lens: None, records: Vec::new(),
         }
     }
 
@@ -236,6 +261,8 @@ impl BackdropBlur {
     pub(super) fn give_back(&mut self) {
         self.pyramid = None;
         self.first.clear();
+        self.views.clear();
+        if let Some(lens) = &mut self.lens { lens.binds.clear(); }
     }
 
     pub(super) fn bind_backdrop(&mut self, device: &wgpu::Device, format: wgpu::TextureFormat, view: &wgpu::TextureView) {
@@ -244,6 +271,88 @@ impl BackdropBlur {
             Some(slot) => slot.1 = bind,
             None => self.first.push((format, bind)),
         }
+        match self.views.iter_mut().find(|(f, _)| *f == format) {
+            Some(slot) => slot.1 = view.clone(),
+            None => self.views.push((format, view.clone())),
+        }
+        if let Some(lens) = &mut self.lens { lens.binds.retain(|(f, _)| *f != format); }
+    }
+
+    /// Makes the lens pipeline for `format` and its bindings for every pooled backdrop.
+    fn ensure_lens(&mut self, device: &wgpu::Device, uber: &wgpu::BindGroupLayout, format: wgpu::TextureFormat) {
+        let mut lens = self.lens.take().unwrap_or_else(|| {
+            let texture = |binding| wgpu::BindGroupLayoutEntry {
+                binding,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            };
+            let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("backdrop lens"),
+                entries: &[
+                    texture(0),
+                    wgpu::BindGroupLayoutEntry { binding: 1, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering), count: None },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: true,
+                            min_binding_size: wgpu::BufferSize::new(std::mem::size_of::<Level>() as u64),
+                        },
+                        count: None,
+                    },
+                    texture(3),
+                ],
+            });
+            let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("backdrop lens"),
+                bind_group_layouts: &[Some(uber), Some(&layout)],
+                immediate_size: 0,
+            });
+            let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("backdrop lens"), source: wgpu::ShaderSource::Wgsl(lens_wgsl().into()) });
+            Lens { layout, pipeline_layout, shader, pipelines: Vec::new(), binds: Vec::new() }
+        });
+        if !lens.pipelines.iter().any(|(f, _)| *f == format) {
+            let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("backdrop lens"),
+                layout: Some(&lens.pipeline_layout),
+                vertex: wgpu::VertexState { module: &lens.shader, entry_point: Some("vs"), compilation_options: Default::default(), buffers: &[Some(metallib::uber_vertex_layout())] },
+                primitive: metallib::uber_primitive(),
+                depth_stencil: None,
+                multisample: Default::default(),
+                fragment: Some(wgpu::FragmentState {
+                    module: &lens.shader,
+                    entry_point: Some("fs"),
+                    compilation_options: Default::default(),
+                    targets: &[Some(wgpu::ColorTargetState { format, blend: Some(Blend::SourceOver.state()), write_mask: wgpu::ColorWrites::ALL })],
+                }),
+                multiview_mask: None,
+                cache: None,
+            });
+            lens.pipelines.push((format, pipeline));
+        }
+        if let Some(pyramid) = &self.pyramid {
+            for (format, view) in &self.views {
+                if lens.binds.iter().any(|(f, _)| f == format) { continue; }
+                let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("backdrop lens"),
+                    layout: &lens.layout,
+                    entries: &[
+                        wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&pyramid.up[0]) },
+                        wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&self.sampler) },
+                        wgpu::BindGroupEntry { binding: 2, resource: self.levels_binding() },
+                        wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(view) },
+                    ],
+                });
+                lens.binds.push((*format, bind));
+            }
+        }
+        self.lens = Some(lens);
     }
 
     pub(super) fn ensure_composite(&mut self, device: &wgpu::Device, format: wgpu::TextureFormat) {
@@ -291,6 +400,7 @@ impl BackdropBlur {
         let have = self.pyramid.as_ref().map_or([0; 2], |p| p.size);
         let size = [0, 1].map(|k| have[k].min(cap[k]).max(need[k]));
         if size == have { return; }
+        if let Some(lens) = &mut self.lens { lens.binds.clear(); }
         let mips = MIPS;
         let chain = |label| {
             let t = device.create_texture(&wgpu::TextureDescriptor {
@@ -395,11 +505,19 @@ impl Renderer {
         let viewport = [vw as f32, vh as f32];
         let mut placed = Vec::new();
         let mut need = [STEP; 2];
-        let records = self.effects.iter().filter(|(_, i)| i.params[1] == KIND_BACKDROP_BLUR).take(MAX_BACKDROP_BLURS);
+        let (mut blurs, mut lenses) = (0, 0);
+        let records = self.effects.iter().filter(|(_, i)| i.params[1] == KIND_BACKDROP_BLUR).filter(|(_, i)| {
+            let (count, max) = if i.uv[3] >= 1.0 { (&mut lenses, MAX_BACKDROP_LENSES) } else { (&mut blurs, MAX_BACKDROP_BLURS) };
+            *count += 1;
+            *count <= max
+        });
         for (at, i) in records {
             let sigma = i.params[0];
             let (n, share) = levels(sigma, MIPS as usize - 1);
-            let reach = sigma.min(SIGMAS[n]) * 3.0 + 2.0;
+            // A lens (`uv`: thickness, bevel, gap, index) reads up to twice its height beside
+            // itself (backdrop_lens.wgsl's `backdrop`).
+            let lens = i.uv[3] >= 1.0;
+            let reach = sigma.min(SIGMAS[n]) * 3.0 + 2.0 + if lens { (i.uv[0] + i.uv[2]) * 2.0 } else { 0.0 };
             let region = [
                 (i.rect[0] - reach).max(0.0),
                 (i.rect[1] - reach).max(0.0),
@@ -411,7 +529,7 @@ impl Renderer {
             let align = (2u32 << n) as f32;
             let origin = [(region[0] / align).floor() * align, (region[1] / align).floor() * align];
             for k in 0..2 { need[k] = need[k].max((((region[k + 2] - origin[k]) / 2.0).ceil() as u32).next_multiple_of(STEP)); }
-            placed.push((*at, n, share, region, origin));
+            placed.push((*at, n, share, region, origin, lens, sigma > 0.0));
         }
         if placed.is_empty() { return; }
         // The window plus the most an aligned origin can sit before it.
@@ -419,8 +537,9 @@ impl Renderer {
         blur.ensure_pyramid(device, need, cap);
         let Some(pyramid) = &blur.pyramid else { return };
         let extent = [pyramid.size[0] as f32 * 2.0, pyramid.size[1] as f32 * 2.0];
-        let mut levels_data = vec![0u8; MAX_BACKDROP_BLURS * SLOTS * SLOT as usize];
-        for (slot, (at, n, share, region, origin)) in placed.into_iter().enumerate() {
+        let mut levels_data = vec![0u8; RECORDS * SLOTS * SLOT as usize];
+        let lensed = placed.iter().any(|p| p.5);
+        for (slot, (at, n, share, region, origin, lens, blurred)) in placed.into_iter().enumerate() {
             let inside = [(region[0] - origin[0]) / extent[0], (region[1] - origin[1]) / extent[1],
                 (region[2] - origin[0]) / extent[0], (region[3] - origin[1]) / extent[1]];
             let place = [origin[0], origin[1], extent[0], extent[1]];
@@ -436,7 +555,12 @@ impl Renderer {
                 let at = (slot * SLOTS + m) * SLOT as usize;
                 levels_data[at..at + std::mem::size_of::<Level>()].copy_from_slice(bytemuck::bytes_of(&level));
             }
-            blur.records.push(Record { at, slot, levels: n, region, origin });
+            blur.records.push(Record { at, slot, levels: n, region, origin, lens, blur: blurred });
+        }
+        if lensed {
+            blur.ensure_lens(device, &self.bind_layout, self.format);
+            for (format, _) in &self.extra { blur.ensure_lens(device, &self.bind_layout, *format); }
+            if self.layers.targets.iter().any(Option::is_some) { blur.ensure_lens(device, &self.bind_layout, layers::FORMAT); }
         }
         let used = blur.records.last().map_or(0, |r| (r.slot + 1) * SLOTS * SLOT as usize);
         staging.write_buffer(&blur.uniforms, 0, &levels_data[..used]);
@@ -450,6 +574,12 @@ impl Renderer {
         let Ok(k) = blur.records.binary_search_by_key(&at, |r| r.at) else { return };
         let record = &blur.records[k];
         let (Some((_, composite)), Some(pyramid)) = (blur.composites.iter().find(|(f, _)| *f == format), &blur.pyramid) else { return };
+        let lens = record.lens.then(|| blur.lens.as_ref().and_then(|l| Some((
+            &l.pipelines.iter().find(|(f, _)| *f == format)?.1,
+            &l.binds.iter().find(|(f, _)| *f == format)?.1,
+        ))));
+        // A lens whose pipeline or binding is missing draws only the fill, as an unprepared blur.
+        if lens == Some(None) { return; }
         let (origin, size) = self.target_frame(target);
         let (r, c) = (instance.rect, instance.clip);
         let edge = |v: f32, o: f32, max: u32| (v - o).clamp(0.0, max as f32) as u32;
@@ -457,7 +587,7 @@ impl Renderer {
         let (x1, y1) = (edge((r[0] + r[2]).min(c[2]).ceil(), origin[0], size[0]), edge((r[1] + r[3]).min(c[3]).ceil(), origin[1], size[1]));
         if x1 <= x0 || y1 <= y0 { return; }
         let split = pass.split(self, format, origin, size, target.is_some(), Some(record.region), |encoder, backdrop| {
-            blur.encode(encoder, backdrop.format, record);
+            if record.blur { blur.encode(encoder, backdrop.format, record); }
         });
         if split.is_none() { return; }
         let scope = pass.scissor();
@@ -469,9 +599,10 @@ impl Renderer {
                 None => &self.bind_group,
             };
             pass.set_scissor_rect(x0, y0, x1 - x0, y1 - y0);
-            pass.set_pipeline(composite);
+            let (pipeline, result) = lens.flatten().unwrap_or((composite, &pyramid.result));
+            pass.set_pipeline(pipeline);
             pass.set_bind_group(0, bind, &[]);
-            pass.set_bind_group(1, &pyramid.result, &[(record.slot * SLOTS) as u32 * SLOT as u32]);
+            pass.set_bind_group(1, result, &[(record.slot * SLOTS) as u32 * SLOT as u32]);
             pass.set_vertex_buffer(0, self.instances.slice(..));
             pass.draw(0..4, at..at + 1);
         }

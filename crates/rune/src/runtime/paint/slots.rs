@@ -31,11 +31,12 @@ pub(super) fn push_effect(instances: &mut Vec<Instance>, (effect, mark): (crate:
     Some(instances.len() - 2)
 }
 
-/// Pushes a backdrop blur record (`El::backdrop_blur`) of `sigma` points over `rect` with corner
+/// Pushes a backdrop blur record (`El::backdrop_blur`) of `sigma` points, bent by `lens` when set
+/// (`El::backdrop_lens`, its optics in the record's `uv` and `border`), over `rect` with corner
 /// `radii` (continuous when `continuous`), cut by `clip`, the soft edges `fade` from
 /// `fade_origin` and an ancestor's rounded clip `rounded`, at `k_px` device pixels per point and
 /// opacity `o`. Returns the signed corner radius an outer shadow leaves clear over the blur.
-pub(super) fn push_backdrop_blur(instances: &mut Vec<Instance>, sigma: f32, (rect, radii, continuous): ([f32; 4], [f32; 4], bool),
+pub(super) fn push_backdrop_blur(instances: &mut Vec<Instance>, (sigma, lens): (f32, Option<crate::el::Lens>), (rect, radii, continuous): ([f32; 4], [f32; 4], bool),
     (clip, fade, fade_origin): ([f32; 4], [f32; 4], [f32; 4]), rounded: Option<([f32; 4], [f32; 4])>, k_px: f32, o: f32) -> f32 {
     // One clip rectangle fits the packed ABI: a rounded clip cut by `clip` keeps only the cut.
     let (clip, round) = match rounded {
@@ -47,9 +48,9 @@ pub(super) fn push_backdrop_blur(instances: &mut Vec<Instance>, sigma: f32, (rec
         rect,
         radii: if continuous { radii.map(|v| -v) } else { radii },
         fill: [0.0, 0.0, 0.0, o],
-        border: [0.0; 4],
+        border: lens.map_or([0.0; 4], |l| l.border()),
         params: [sigma * k_px, KIND_BACKDROP_BLUR, 0.0, k_px],
-        uv: [0.0; 4],
+        uv: lens.map_or([0.0; 4], |l| l.uv(k_px)),
         clip,
         fade: crate::render::pack_fade(fade, fade_origin, clip),
     };

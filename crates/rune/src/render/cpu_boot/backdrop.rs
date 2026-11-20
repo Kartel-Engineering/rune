@@ -41,6 +41,9 @@ pub(super) struct Record {
 /// The record's blur plan (`prepare_backdrop_blur`), or None when its region is empty.
 pub(super) fn plan(i: &Instance, viewport: (u32, u32)) -> Option<Record> {
     let sigma = i.params[0];
+    // A lens without a blur (`El::backdrop_lens`) has no CPU form: it draws only its fill, as a
+    // blur does where the GPU can't take it.
+    if sigma <= 0.0 { return None; }
     let (n, share) = levels(sigma, MIPS - 1);
     let reach = sigma.min(SIGMAS[n]) * 3.0 + 2.0;
     let v = [viewport.0 as f32, viewport.1 as f32];
