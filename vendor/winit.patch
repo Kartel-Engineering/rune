@@ -395,3 +395,54 @@ index 6d60c1c5..8b63fa59 100644
  
          super::set_window_long(
              window,
+diff --git a/src/platform_impl/web/event_loop/window_target.rs b/src/platform_impl/web/event_loop/window_target.rs
+--- a/src/platform_impl/web/event_loop/window_target.rs
++++ b/src/platform_impl/web/event_loop/window_target.rs
+@@ -144,8 +144,9 @@ impl ActiveEventLoop {
+ 
+                 let device_id = RootDeviceId(DeviceId::dummy());
+ 
+-                runner.send_events(
+-                    iter::once(Event::WindowEvent {
++                // Rune: the key's modifiers before the key, which is read with them.
++                runner.send_events(modifiers_changed.into_iter().chain(iter::once(
++                    Event::WindowEvent {
+                         window_id: RootWindowId(id),
+                         event: WindowEvent::KeyboardInput {
+                             device_id,
+@@ -160,9 +161,8 @@ impl ActiveEventLoop {
+                             },
+                             is_synthetic: false,
+                         },
+-                    })
+-                    .chain(modifiers_changed),
+-                );
++                    },
++                )));
+             },
+         );
+ 
+@@ -180,8 +180,9 @@ impl ActiveEventLoop {
+ 
+                 let device_id = RootDeviceId(DeviceId::dummy());
+ 
+-                runner.send_events(
+-                    iter::once(Event::WindowEvent {
++                // Rune: the key's modifiers before the key, which is read with them.
++                runner.send_events(modifiers_changed.into_iter().chain(iter::once(
++                    Event::WindowEvent {
+                         window_id: RootWindowId(id),
+                         event: WindowEvent::KeyboardInput {
+                             device_id,
+@@ -196,9 +197,8 @@ impl ActiveEventLoop {
+                             },
+                             is_synthetic: false,
+                         },
+-                    })
+-                    .chain(modifiers_changed),
+-                )
++                    },
++                )))
+             },
+         );
+ 

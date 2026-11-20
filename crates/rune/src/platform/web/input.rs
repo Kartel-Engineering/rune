@@ -407,8 +407,8 @@ impl<S: 'static> Running<S> {
                 // Any key that puts Rune's focus in a field (Tab, or a shortcut such as the
                 // prompt's) hands the page's own field the browser's focus, so a screen reader is
                 // in a real text field with its text, not on the canvas's stand-in for it. After
-                // the key: winit reports the key's modifiers after the key, and the canvas's blur
-                // clears them, so a hand-over inside the key left Ctrl held for good.
+                // the key, so the canvas's blur, which clears the modifiers, comes after the key
+                // that read them.
                 if pressed { activate = Activate::AfterKey; }
                 if let winit::keyboard::PhysicalKey::Code(key) = event.physical_key {
                     self.rt.physical_with_fallback(crate::PhysicalInput::Key { key, mods: modifiers(self.input.mods),

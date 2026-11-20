@@ -144,8 +144,9 @@ impl ActiveEventLoop {
 
                 let device_id = RootDeviceId(DeviceId::dummy());
 
-                runner.send_events(
-                    iter::once(Event::WindowEvent {
+                // Rune: the key's modifiers before the key, which is read with them.
+                runner.send_events(modifiers_changed.into_iter().chain(iter::once(
+                    Event::WindowEvent {
                         window_id: RootWindowId(id),
                         event: WindowEvent::KeyboardInput {
                             device_id,
@@ -160,9 +161,8 @@ impl ActiveEventLoop {
                             },
                             is_synthetic: false,
                         },
-                    })
-                    .chain(modifiers_changed),
-                );
+                    },
+                )));
             },
         );
 
@@ -180,8 +180,9 @@ impl ActiveEventLoop {
 
                 let device_id = RootDeviceId(DeviceId::dummy());
 
-                runner.send_events(
-                    iter::once(Event::WindowEvent {
+                // Rune: the key's modifiers before the key, which is read with them.
+                runner.send_events(modifiers_changed.into_iter().chain(iter::once(
+                    Event::WindowEvent {
                         window_id: RootWindowId(id),
                         event: WindowEvent::KeyboardInput {
                             device_id,
@@ -196,9 +197,8 @@ impl ActiveEventLoop {
                             },
                             is_synthetic: false,
                         },
-                    })
-                    .chain(modifiers_changed),
-                )
+                    },
+                )))
             },
         );
 

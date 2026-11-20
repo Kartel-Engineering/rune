@@ -92,6 +92,19 @@ export async function inputSmoke(page, url) {
     await page.keyboard.press('Meta+k');
     await settle();
     assert.equal((await snapshot()).shortcuts, 2);
+    // Control goes down while focus is outside the canvas, then focus moves to it: the canvas
+    // never saw Control's keydown, so the next key must carry its own modifiers.
+    await page.evaluate(() => {
+        window.__canvas = document.activeElement;
+        const field = document.createElement('input'); field.id = 'outside'; document.body.append(field); field.focus();
+    });
+    await page.keyboard.down('Control');
+    await page.evaluate(() => { document.getElementById('outside').remove(); window.__canvas.focus(); });
+    assert.equal(await page.evaluate(() => document.activeElement === window.__canvas), true);
+    await page.keyboard.press('k');
+    await page.keyboard.up('Control');
+    await settle();
+    assert.equal((await snapshot()).shortcuts, 3, 'a key carries its own modifiers when the canvas missed their keydown');
 
     // Typing through the page's field is one undo step, as typing keys is, and redo brings it back.
     await page.touchscreen.tap(100, 36);
@@ -148,5 +161,5 @@ export async function inputSmoke(page, url) {
     assert.equal((await snapshot()).visible, true);
     console.log(JSON.stringify({ inputRegressions: 'passed', checks: ['stable editor focus', 'recomposition range',
         'beforeinput Enter', 'multiline vs single-line', 'password sink and deletion', 'Tab to canvas',
-        'Escape shortcuts', 'typed run undo', 'modifier hand-over', 'outside dismiss', 'coalesced pointer frames', 'visibility', 'app title', 'nonfatal window requests'] }));
+        'Escape shortcuts', 'modifiers held before focus', 'typed run undo', 'modifier hand-over', 'outside dismiss', 'coalesced pointer frames', 'visibility', 'app title', 'nonfatal window requests'] }));
 }
