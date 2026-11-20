@@ -1,1 +1,0 @@
-- `El::backdrop_lens` reads its backdrop prefiltered at each ray's footprint, as rune-light's glass reads its pyramid: where the shoulder squeezes many backdrop pixels into one, text that moves under the rim stays smooth instead of flickering. Every lens now runs the blur's down chain over its region (five levels), with or without a blur.
