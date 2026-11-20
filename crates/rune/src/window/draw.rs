@@ -106,8 +106,11 @@ impl<S: 'static> Host<S> {
         // before this frame, or waits out a retry of its own (`SurfaceRetries`) and then gives
         // them up. Neither can give a drawable, and wgpu panics asking one for it.
         if !self.replace_lost_surface() { return; }
-        // This frame draws on the GPU: its view reads so (`Cx::on_gpu`).
+        // This frame draws on the GPU: its view reads so (`Cx::on_gpu`), and whether backdrop
+        // effects can copy its drawable (`Cx::backdrop_copies`).
         self.rt.set_on_gpu(true);
+        let copies = self.win.as_ref().is_some_and(|l| l.config.usage.contains(wgpu::TextureUsages::COPY_SRC));
+        self.rt.set_backdrop_copies(copies);
         // A clip's layer began or stopped showing: the UI's swap chain composites premultiplied
         // only while one does (`video_layer`), made again before this frame draws.
         #[cfg(target_os = "windows")]

@@ -45,7 +45,7 @@ impl El {
 /// law, Fresnel reflection), so the flat middle shows the backdrop as it is and the shoulder pulls
 /// it in from beyond the rim. The index of refraction varies with wavelength (Cauchy), so edges
 /// between light and dark fringe in colour, and the steep shoulder reflects a soft light above or
-/// the backdrop beside the glass. Sizes are in points.
+/// the backdrop beside the glass. Sizes are in points, at most 1000.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Lens {
     thickness: f32,
@@ -62,17 +62,19 @@ impl Default for Lens {
 
 /// `v` if it is finite and at least `min`, else `otherwise`.
 const fn finite(v: f32, min: f32, otherwise: f32) -> f32 { if v.is_finite() { v.max(min) } else { otherwise } }
+/// Most a size may be, in points, so it stays finite in device pixels and in the shader.
+const MAX_PT: f32 = 1000.0;
 
 impl Lens {
     /// Crown glass: 8 points thick with an 8-point shoulder, 4 points above the backdrop, index
     /// 1.5, dispersion 0.03.
     pub const fn new() -> Lens { Lens { thickness: 8.0, bevel: 8.0, gap: 4.0, ior: 1.5, dispersion: 0.03, light: 1.0 } }
     /// Height the flat top rises over the rim.
-    pub const fn thickness(mut self, pt: f32) -> Lens { self.thickness = finite(pt, 0.0, 8.0); self }
+    pub const fn thickness(mut self, pt: f32) -> Lens { self.thickness = finite(pt, 0.0, 8.0).min(MAX_PT); self }
     /// Width of the rounded shoulder from the rim to the flat top.
-    pub const fn bevel(mut self, pt: f32) -> Lens { self.bevel = finite(pt, 0.5, 8.0); self }
+    pub const fn bevel(mut self, pt: f32) -> Lens { self.bevel = finite(pt, 0.5, 8.0).min(MAX_PT); self }
     /// Height of the rim above the backdrop: how far in the shoulder pulls the backdrop.
-    pub const fn gap(mut self, pt: f32) -> Lens { self.gap = finite(pt, 0.0, 4.0); self }
+    pub const fn gap(mut self, pt: f32) -> Lens { self.gap = finite(pt, 0.0, 4.0).min(MAX_PT); self }
     /// Index of refraction at 550 nm; 1 bends nothing.
     pub const fn ior(mut self, n: f32) -> Lens { self.ior = finite(n, 1.0, 1.5); self }
     /// n(400 nm) − n(700 nm). Real glass is positive (blue bends most); a negative value swaps the

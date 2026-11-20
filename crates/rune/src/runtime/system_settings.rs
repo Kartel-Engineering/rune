@@ -86,6 +86,14 @@ impl<S: 'static> Runtime<S> {
             self.dirty = true;
         }
     }
+    /// What [`Cx::backdrop_copies`] reports. Hosts set it with [`Self::set_on_gpu`], from whether
+    /// the surface they draw into can be copied from; a change re-runs the view.
+    pub fn set_backdrop_copies(&mut self, on: bool) {
+        if on != self.backdrop_copies {
+            self.backdrop_copies = on;
+            self.dirty = true;
+        }
+    }
     pub fn set_system_reduced_motion(&mut self, reduced: bool) {
         if self.system_reduced_motion != reduced {
             self.system_reduced_motion = reduced;

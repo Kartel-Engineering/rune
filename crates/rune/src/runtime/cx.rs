@@ -61,6 +61,7 @@ pub struct Cx<S> {
     pub(super) system_contrast: Option<crate::SystemContrast>,
     pub(super) system_increased_contrast: bool,
     pub(super) on_gpu: bool,
+    pub(super) backdrop_copies: bool,
     pub(super) system_scroll_bars: crate::platform::scroll_bars::SystemScrollBars,
     pub(super) system_reduced_motion: bool,
     pub(super) reduced_motion: bool,
@@ -88,6 +89,7 @@ impl<S> Cx<S> {
             system_contrast: self.system_contrast,
             system_increased_contrast: self.system_increased_contrast,
             on_gpu: self.on_gpu,
+            backdrop_copies: self.backdrop_copies,
             system_scroll_bars: self.system_scroll_bars,
             system_reduced_motion: self.system_reduced_motion, reduced_motion: self.reduced_motion, time_scale: self.time_scale, zoom: self.zoom,
             caret: self.caret.clone(), caret_read: self.caret_read.clone(),
@@ -281,6 +283,15 @@ impl<S> Cx<S> {
     /// Headless runs report false unless a test sets it ([`Runtime::set_on_gpu`](crate::Runtime::set_on_gpu)).
     pub fn on_gpu(&self) -> bool {
         self.on_gpu
+    }
+    /// Whether this window's frames can copy what they have drawn so far, so `El::backdrop_blur`
+    /// and `El::backdrop_lens` draw: on a GPU whose surface can be copied from. False on the CPU,
+    /// on a WebGL 2 canvas and wherever else those effects draw only their element's fill, so a
+    /// view can keep that fill opaque enough to read over sharp content there.
+    /// Headless runs report false unless a test sets it
+    /// ([`Runtime::set_backdrop_copies`](crate::Runtime::set_backdrop_copies)).
+    pub fn backdrop_copies(&self) -> bool {
+        self.backdrop_copies
     }
     /// The host's OS accessibility preference, independent of this commit's override.
     pub fn system_reduced_motion(&self) -> bool {

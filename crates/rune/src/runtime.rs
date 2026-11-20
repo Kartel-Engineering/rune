@@ -476,6 +476,8 @@ pub struct Runtime<S: 'static> {
     pub(crate) system_increased_contrast: bool,
     /// What [`Cx::on_gpu`] reports.
     on_gpu: bool,
+    /// What [`Cx::backdrop_copies`] reports.
+    backdrop_copies: bool,
     scroll_bars: system_settings::ScrollBarHost,
     pub time_scale: f32,
     /// The last view's `Cx::foreground` and `Cx::focus_ring`, for rows built after it and the
@@ -934,6 +936,7 @@ impl<S: 'static> Runtime<S> {
             system_contrast: None,
             system_increased_contrast: false,
             on_gpu: false,
+            backdrop_copies: false,
             scroll_bars: Default::default(),
             time_scale: 1.0,
             defaults: Default::default(),

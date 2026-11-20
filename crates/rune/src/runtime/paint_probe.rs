@@ -42,7 +42,8 @@ impl<S: 'static> Runtime<S> {
             sizes[S_RADIUS] = p.radius.0[0];
             sizes[S_BORDER] = v.border_width();
             sizes[S_BLUR] = self.inh_scratch.get(i).map_or(p.blur, |h| h.blur);
-            sizes[S_BACKDROP] = v.backdrop_blur;
+            // A lens draws its backdrop through glass even without a blur.
+            sizes[S_BACKDROP] = if v.backdrop_lens.is_some() { v.backdrop_blur.max(1.0) } else { v.backdrop_blur };
             if let Some(sh) = v.shadows.iter().find(|s| !s.inset) {
                 let at = self.shadow_at(n.id, 0, sh);
                 colors[C_SHADOW] = self.color(n.id, P_SHADOWS[0], sh.color).alpha_times(k);

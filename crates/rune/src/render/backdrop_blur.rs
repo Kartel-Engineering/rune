@@ -279,7 +279,7 @@ impl BackdropBlur {
     }
 
     /// Makes the lens pipeline for `format` and its bindings for every pooled backdrop.
-    fn ensure_lens(&mut self, device: &wgpu::Device, uber: &wgpu::BindGroupLayout, format: wgpu::TextureFormat) {
+    pub(super) fn ensure_lens(&mut self, device: &wgpu::Device, uber: &wgpu::BindGroupLayout, format: wgpu::TextureFormat) {
         let mut lens = self.lens.take().unwrap_or_else(|| {
             let texture = |binding| wgpu::BindGroupLayoutEntry {
                 binding,

@@ -13,8 +13,8 @@ impl Renderer {
         BackdropBlur::new(device, &self.bind_layout).ensure_composite(device, self.format);
     }
 
-    /// Makes, times and drops what a first backdrop blur, layer blur, video frame, transparent
-    /// window and spring-driven renderer build, in milliseconds each.
+    /// Makes, times and drops what a first backdrop blur, backdrop lens, layer blur, video frame,
+    /// transparent window and spring-driven renderer build, in milliseconds each.
     #[doc(hidden)]
     pub fn first_use_ms(&self, device: &wgpu::Device) -> Vec<(&'static str, f64)> {
         fn ms(f: impl FnOnce()) -> f64 {
@@ -26,6 +26,7 @@ impl Renderer {
         let node = Node { x: Track::constant(0.0), y: Track::constant(0.0), opacity: Track::constant(1.0) };
         vec![
             ("backdrop_blur", ms(|| BackdropBlur::new(device, &self.bind_layout).ensure_composite(device, self.format))),
+            ("backdrop_lens", ms(|| BackdropBlur::new(device, &self.bind_layout).ensure_lens(device, &self.bind_layout, self.format))),
             ("layer_blur", ms(|| drop(layer_blur::Pipeline::new(device, super::layers::FORMAT)))),
             ("video", ms(|| drop(crate::native_surface::SurfaceRenderer::new(device, self.format)))),
             ("alpha", ms(|| drop(AlphaSurface::new(device, self.format, (16, 16))))),

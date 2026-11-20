@@ -1,13 +1,16 @@
 // Draws a backdrop blur record's backdrop through glass (`El::backdrop_lens`), inside its rounded
-// rect, cut by its clip, at its opacity (`fill.a`). The glass is the element's own shape resting
-// on the backdrop: flat on top at `gap + thickness`, falling over the `bevel` with a quarter-circle
-// profile (vertical at the rim) to `gap`. A viewer straight above sends one ray per pixel; it
-// refracts at the top (Snell) and runs straight to the backdrop, so the flat middle shows the
-// backdrop as it is and the shoulder pulls it in from beyond the rim. Two indices (Cauchy,
+// rect, cut by its clip, at its opacity (`fill.a`). The glass is the element's own shape floating
+// `gap` above the backdrop: a flat bottom, and a top that is flat at `gap + thickness` and falls
+// over the `bevel` with a quarter-circle profile (vertical at the rim) to a thin edge. A viewer
+// straight above sends one ray per pixel; it refracts at the top (Snell), crosses the glass to
+// the bottom, refracts again into the air gap and lands on the backdrop, so the flat middle shows
+// the backdrop as it is and the shoulder pulls it in from beyond the rim. The glass absorbs a
+// little along the path (Beer-Lambert), which dims light and leaves black black. Two indices (Cauchy,
 // n(400 nm) − n(700 nm) = dispersion) are traced and eight wavelengths interpolate between them,
 // weighted into RGB, so light and dark edges fringe as a spectrum. The top takes exact dielectric
 // Fresnel; what it reflects is a soft room light above, or the backdrop beside the glass off the
-// steep shoulder. The optics follow rune-light's glass.wgsl. The backdrop is the sharp copy; when
+// steep shoulder. The optics follow rune-light's glass.wgsl. Everything is premultiplied, as
+// the copied backdrop is. The backdrop is the sharp copy; when
 // the record also blurs (frosted glass), the flat top shows the blur and the shoulder fades from
 // sharp at the rim to the blur at the top. Prepended with `clip.wgsl`; group 0 is the uber
 // shader's.
@@ -58,7 +61,7 @@ struct Out {
     @location(4) @interpolate(flat) clip: vec4<f32>,
     @location(5) @interpolate(flat) fade: vec4<u32>,
     @location(6) @interpolate(flat) slab: vec4<f32>,
-    // dispersion, light, frosted (0 or 1).
+    // dispersion, light, frosted (0 or 1), device px per point.
     @location(7) @interpolate(flat) optics: vec4<f32>,
 };
 
@@ -77,7 +80,7 @@ fn vs(i: In) -> Out {
     o.clip = i.clip;
     o.fade = i.fade;
     o.slab = i.uv;
-    o.optics = vec4<f32>(i.border.x, i.border.y, select(0.0, 1.0, i.params.x > 0.0), 0.0);
+    o.optics = vec4<f32>(i.border.x, i.border.y, select(0.0, 1.0, i.params.x > 0.0), max(i.params.w, 1e-3));
     return o;
 }
 
@@ -93,9 +96,14 @@ fn sdf(k: Slab, p: vec2<f32>) -> f32 {
     return sd_rounded(p - (k.rect.xy + half), half, k.radii);
 }
 
+// Absorption per point of path in the glass (Beer-Lambert), the same for every channel.
+const ABSORB: f32 = 0.003;
+
+// The top's height over the backdrop: the shoulder starts at 4 % of the thickness, so the rim has
+// an edge to refract through.
 fn height_d(k: Slab, d: f32) -> f32 {
     let x = clamp(-d / max(k.s.y, 0.5), 0.0, 1.0);
-    return k.s.z + k.s.x * sqrt(max(1.0 - (1.0 - x) * (1.0 - x), 0.0));
+    return k.s.z + k.s.x * (0.04 + 0.96 * sqrt(max(1.0 - (1.0 - x) * (1.0 - x), 0.0)));
 }
 
 fn height(k: Slab, p: vec2<f32>) -> f32 {
@@ -145,10 +153,14 @@ fn backdrop(k: Slab, q0: vec2<f32>, frost: f32) -> vec4<f32> {
     return mix(s, textureSampleLevel(blurred, smp, (q - u.place.xy) / u.place.zw, 0.0), frost);
 }
 
-// Where a ray that enters the top at p with normal n and index ior lands on the backdrop.
-fn land(p: vec2<f32>, n: vec3<f32>, zt: f32, ior: f32) -> vec2<f32> {
-    let r = refract(vec3<f32>(0.0, 0.0, -1.0), n, 1.0 / ior);
-    return p + r.xy * (zt / max(-r.z, 1e-3));
+// Where a ray that enters the top at p (height zt, normal n, index ior) lands on the backdrop
+// (xy), and its path in the glass (z). Past the critical angle at the bottom it lands below the
+// exit point, as rune-light's glass does without its total internal reflection.
+fn land(k: Slab, p: vec2<f32>, n: vec3<f32>, zt: f32, ior: f32) -> vec3<f32> {
+    let r1 = refract(vec3<f32>(0.0, 0.0, -1.0), n, 1.0 / ior);
+    let s = (zt - k.s.z) / max(-r1.z, 1e-3);
+    let r2 = refract(r1, vec3<f32>(0.0, 0.0, 1.0), ior);
+    return vec3<f32>(p + r1.xy * s + r2.xy * (k.s.z / max(-r2.z, 0.05)), s);
 }
 
 // Approximate CIE response of eight wavelengths 400…700 nm in linear sRGB.
@@ -172,25 +184,28 @@ fn shade(k: Slab, p: vec2<f32>, d: f32, optics: vec4<f32>) -> vec4<f32> {
     // so what it pulls in from beyond the rim stays legible.
     let x = clamp(-d / max(k.s.y, 0.5), 0.0, 1.0);
     let frost = optics.z * x * x;
+    let absorb = ABSORB / optics.w;
     // The flat top: straight through, less what the top reflects.
     if (-d >= k.s.y + 1.0) {
         let f0 = fresnel(1.0, 1.0, ior);
         let b = backdrop(k, p, optics.z);
-        return vec4<f32>(b.rgb * (1.0 - f0) + env(vec3<f32>(0.0, 0.0, 1.0), optics.y) * f0, b.a);
+        let t = (1.0 - f0) * exp(-absorb * k.s.x);
+        return vec4<f32>(b.rgb * t + env(vec3<f32>(0.0, 0.0, 1.0), optics.y) * f0 * b.a, b.a);
     }
     let zt = height_d(k, d);
     let n = normal_at(k, p);
     let bc = optics.x / (1.0 / (0.4 * 0.4) - 1.0 / (0.7 * 0.7));
     let ac = ior - bc / (0.55 * 0.55);
-    let red = land(p, n, zt, max(ac + bc / (0.7 * 0.7), 1.0));
-    let violet = land(p, n, zt, max(ac + bc / (0.4 * 0.4), 1.0));
+    let red = land(k, p, n, zt, max(ac + bc / (0.7 * 0.7), 1.0));
+    let violet = land(k, p, n, zt, max(ac + bc / (0.4 * 0.4), 1.0));
     var trans = vec3<f32>(0.0);
     var wsum = vec3<f32>(0.0);
     var alpha = 0.0;
     for (var i = 0; i < 8; i = i + 1) {
         let w = spectrum(i);
-        let b = backdrop(k, mix(violet, red, f32(i) / 7.0), frost);
-        trans = trans + w * b.rgb;
+        let q = mix(violet, red, f32(i) / 7.0);
+        let b = backdrop(k, q.xy, frost);
+        trans = trans + w * b.rgb * exp(-absorb * q.z);
         wsum = wsum + w;
         alpha = alpha + b.a / 8.0;
     }
@@ -201,7 +216,7 @@ fn shade(k: Slab, p: vec2<f32>, d: f32, optics: vec4<f32>) -> vec4<f32> {
     let rr = reflect(vec3<f32>(0.0, 0.0, -1.0), n);
     let reach = min(zt * length(rr.xy) / max(-rr.z, 1e-3), zt * 4.0);
     let beside = backdrop(k, p + normalize(rr.xy + vec2<f32>(1e-5)) * reach, frost).rgb;
-    let refl = mix(env(rr, optics.y), beside, smoothstep(0.05, -0.15, rr.z));
+    let refl = mix(env(rr, optics.y) * alpha, beside, smoothstep(0.05, -0.15, rr.z));
     return vec4<f32>(trans * (1.0 - f) + refl * f, alpha);
 }
 
@@ -213,8 +228,16 @@ fn fs(i: Out) -> @location(0) vec4<f32> {
     if (cov <= 0.0) {
         discard;
     }
-    // ponytail: one ray per pixel. rune-light supersamples the shoulder 4x against aliasing; add
-    // that if a thin bevel shimmers while it moves.
-    let c = shade(k, i.p, min(d, 0.0), i.optics);
-    return vec4<f32>(c.rgb * c.a, c.a) * cov;
+    if (-d >= k.s.y + 1.0) {
+        return shade(k, i.p, d, i.optics) * cov;
+    }
+    // The shoulder bends fastest: four rays on a rotated grid, as rune-light's glass, so the rim's
+    // fringe does not stair-step.
+    let o = array<vec2<f32>, 4>(vec2<f32>(-0.125, -0.375), vec2<f32>(0.375, -0.125), vec2<f32>(0.125, 0.375), vec2<f32>(-0.375, 0.125));
+    var acc = vec4<f32>(0.0);
+    for (var n = 0; n < 4; n = n + 1) {
+        let q = i.p + o[n];
+        acc = acc + shade(k, q, min(sdf(k, q), 0.0), i.optics);
+    }
+    return acc * 0.25 * cov;
 }
