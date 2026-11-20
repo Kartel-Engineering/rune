@@ -108,9 +108,7 @@ impl<S: 'static> Host<S> {
         if !self.replace_lost_surface() { return; }
         // This frame draws on the GPU: its view reads so (`Cx::on_gpu`), and whether backdrop
         // effects can copy its drawable (`Cx::backdrop_copies`).
-        self.rt.set_on_gpu(true);
-        let copies = self.win.as_ref().is_some_and(|l| l.config.usage.contains(wgpu::TextureUsages::COPY_SRC));
-        self.rt.set_backdrop_copies(copies);
+        self.rt.set_gpu_surface(Some(self.win.as_ref().map_or(wgpu::TextureUsages::empty(), |l| l.config.usage)));
         // A clip's layer began or stopped showing: the UI's swap chain composites premultiplied
         // only while one does (`video_layer`), made again before this frame draws.
         #[cfg(target_os = "windows")]

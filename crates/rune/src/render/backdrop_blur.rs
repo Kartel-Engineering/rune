@@ -17,6 +17,9 @@ const RECORDS: usize = MAX_BACKDROP_BLURS + MAX_BACKDROP_LENSES;
 
 /// Pyramid levels below the backdrop, the first at half resolution.
 const MIPS: u32 = 7;
+/// Down levels every lens runs, blurred or not: its rim reads the backdrop prefiltered at its
+/// footprint, up to 2^LENS_LEVELS device pixels wide (`TOP` in backdrop_lens.wgsl is this less one).
+const LENS_LEVELS: usize = 5;
 /// Uniform slot stride: the largest `min_uniform_buffer_offset_alignment` WebGPU allows.
 const SLOT: u64 = 256;
 /// Uniform slots per record: one per level for passes that read the pyramid, then the first
@@ -51,13 +54,16 @@ struct Record {
     slot: usize,
     /// The up chain starts at this level (at least 1).
     levels: usize,
+    /// The down chain ends at this level: `levels`, or deeper for a lens's prefilter.
+    down: usize,
     /// Window device pixels blurred: the rect plus the blur's reach, inside the viewport.
     region: [f32; 4],
     /// The pyramid's window origin, aligned to a texel of level `levels`.
     origin: [f32; 2],
     /// Drawn through glass (`El::backdrop_lens`).
     lens: bool,
-    /// Blurred first: a lens without a blur reads the sharp copy and skips the pyramid.
+    /// Blurred first: a lens without a blur reads the sharp copy and the down chain, and skips
+    /// the up chain.
     blur: bool,
 }
 
@@ -65,6 +71,8 @@ struct Pyramid {
     /// Level 0 in texels; level m is `size >> m`.
     size: [u32; 2],
     down: Vec<wgpu::TextureView>,
+    /// Every down level in one view, the lens's prefilter.
+    down_all: wgpu::TextureView,
     up: Vec<wgpu::TextureView>,
     /// The down pass into level m + 1 reads level m.
     down_binds: Vec<wgpu::BindGroup>,
@@ -211,6 +219,8 @@ impl BackdropBlur {
             label: Some("backdrop blur"),
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
+            // Between the lens's prefilter levels; every other read is of one level.
+            mipmap_filter: wgpu::MipmapFilterMode::Linear,
             ..Default::default()
         });
         let dummy = device.create_texture(&wgpu::TextureDescriptor {
@@ -280,7 +290,7 @@ impl BackdropBlur {
     }
 
     /// Makes the lens pipeline for `format` and its bindings for every pooled backdrop.
-    pub(super) fn ensure_lens(&mut self, device: &wgpu::Device, uber: &wgpu::BindGroupLayout, format: wgpu::TextureFormat) {
+    fn ensure_lens(&mut self, device: &wgpu::Device, uber: &wgpu::BindGroupLayout, format: wgpu::TextureFormat) {
         let mut lens = self.lens.take().unwrap_or_else(|| {
             let texture = |binding| wgpu::BindGroupLayoutEntry {
                 binding,
@@ -308,6 +318,7 @@ impl BackdropBlur {
                         count: None,
                     },
                     texture(3),
+                    texture(4),
                 ],
             });
             let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -348,6 +359,7 @@ impl BackdropBlur {
                         wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&self.sampler) },
                         wgpu::BindGroupEntry { binding: 2, resource: self.levels_binding() },
                         wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(view) },
+                        wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::TextureView(&pyramid.down_all) },
                     ],
                 });
                 lens.binds.push((*format, bind));
@@ -414,11 +426,12 @@ impl BackdropBlur {
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
                 view_formats: &[],
             });
-            (0..mips)
+            let views = (0..mips)
                 .map(|m| t.create_view(&wgpu::TextureViewDescriptor { base_mip_level: m, mip_level_count: Some(1), ..Default::default() }))
-                .collect::<Vec<_>>()
+                .collect::<Vec<_>>();
+            (views, t.create_view(&Default::default()))
         };
-        let (down, up) = (chain("backdrop blur down"), chain("backdrop blur up"));
+        let ((down, down_all), (up, _)) = (chain("backdrop blur down"), chain("backdrop blur up"));
         let m = down.len();
         let down_binds = (1..m).map(|k| self.level_bind(device, &down[k - 1], &self.dummy)).collect();
         let up_binds = (0..m.saturating_sub(1))
@@ -433,7 +446,7 @@ impl BackdropBlur {
                 wgpu::BindGroupEntry { binding: 2, resource: self.levels_binding() },
             ],
         });
-        self.pyramid = Some(Pyramid { size, down, up, down_binds, up_binds, result });
+        self.pyramid = Some(Pyramid { size, down, down_all, up, down_binds, up_binds, result });
     }
 
     /// Records the pyramid passes for `record`, reading the backdrop of `format`.
@@ -473,9 +486,10 @@ impl BackdropBlur {
             pass.draw(0..3, 0..1);
         };
         let n = record.levels;
-        for m in 0..=n {
+        for m in 0..=record.down {
             if m == 0 { run(&self.down, &pyramid.down[0], first, 0, MIPS as usize) } else { run(&self.down, &pyramid.down[m], &pyramid.down_binds[m - 1], m, m) }
         }
+        if !record.blur { return; }
         for m in (0..n).rev() {
             let (from_down, from_up) = &pyramid.up_binds[m];
             run(&self.up, &pyramid.up[m], if m + 1 == n { from_down } else { from_up.as_ref().unwrap() }, m, m);
@@ -526,11 +540,13 @@ impl Renderer {
                 (i.rect[1] + i.rect[3] + reach).min(viewport[1]),
             ];
             if region[2] <= region[0] || region[3] <= region[1] { continue; }
-            // On level n's texel grid, so the blur stays put while content scrolls under it.
-            let align = (2u32 << n) as f32;
+            // A lens's down chain reaches its prefilter's coarsest level.
+            let down = if lens { n.max(LENS_LEVELS - 1) } else { n };
+            // On the deepest level's texel grid, so the blur stays put while content scrolls under it.
+            let align = (2u32 << down) as f32;
             let origin = [(region[0] / align).floor() * align, (region[1] / align).floor() * align];
             for k in 0..2 { need[k] = need[k].max((((region[k + 2] - origin[k]) / 2.0).ceil() as u32).next_multiple_of(STEP)); }
-            placed.push((*at, n, share, region, origin, lens, sigma > 0.0));
+            placed.push((*at, n, down, share, region, origin, lens, sigma > 0.0));
         }
         if placed.is_empty() { return; }
         // The window plus the most an aligned origin can sit before it.
@@ -539,8 +555,8 @@ impl Renderer {
         let Some(pyramid) = &blur.pyramid else { return };
         let extent = [pyramid.size[0] as f32 * 2.0, pyramid.size[1] as f32 * 2.0];
         let mut levels_data = vec![0u8; RECORDS * SLOTS * SLOT as usize];
-        let lensed = placed.iter().any(|p| p.5);
-        for (slot, (at, n, share, region, origin, lens, blurred)) in placed.into_iter().enumerate() {
+        let lensed = placed.iter().any(|p| p.6);
+        for (slot, (at, n, down, share, region, origin, lens, blurred)) in placed.into_iter().enumerate() {
             let inside = [(region[0] - origin[0]) / extent[0], (region[1] - origin[1]) / extent[1],
                 (region[2] - origin[0]) / extent[0], (region[3] - origin[1]) / extent[1]];
             let place = [origin[0], origin[1], extent[0], extent[1]];
@@ -556,7 +572,7 @@ impl Renderer {
                 let at = (slot * SLOTS + m) * SLOT as usize;
                 levels_data[at..at + std::mem::size_of::<Level>()].copy_from_slice(bytemuck::bytes_of(&level));
             }
-            blur.records.push(Record { at, slot, levels: n, region, origin, lens, blur: blurred });
+            blur.records.push(Record { at, slot, levels: n, down, region, origin, lens, blur: blurred });
         }
         if lensed {
             blur.ensure_lens(device, &self.bind_layout, self.format);
@@ -588,7 +604,7 @@ impl Renderer {
         let (x1, y1) = (edge((r[0] + r[2]).min(c[2]).ceil(), origin[0], size[0]), edge((r[1] + r[3]).min(c[3]).ceil(), origin[1], size[1]));
         if x1 <= x0 || y1 <= y0 { return; }
         let split = pass.split(self, format, origin, size, target.is_some(), Some(record.region), |encoder, backdrop| {
-            if record.blur { blur.encode(encoder, backdrop.format, record); }
+            if record.blur || record.lens { blur.encode(encoder, backdrop.format, record); }
         });
         if split.is_none() { return; }
         let scope = pass.scissor();

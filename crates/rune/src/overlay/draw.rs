@@ -97,9 +97,7 @@ impl<T: 'static> Overlay<T> {
             return false;
         }
         // An overlay draws only on the GPU (`Cx::on_gpu`).
-        self.rt.set_on_gpu(true);
-        let copies = self.surface.live().is_some_and(|l| l.config.usage.contains(wgpu::TextureUsages::COPY_SRC));
-        self.rt.set_backdrop_copies(copies);
+        self.rt.set_gpu_surface(Some(self.surface.live().map_or(wgpu::TextureUsages::empty(), |l| l.config.usage)));
         // `sync_occlusion` below reads, once a turn, the panel hosting the surface: the window
         // the acquire would check again.
         #[cfg(target_os = "macos")]

@@ -99,7 +99,8 @@ impl El {
     /// The first `MAX_BACKDROP_LENSES` lensed elements in a frame draw glass, apart from the
     /// `MAX_BACKDROP_BLURS` blurs. It falls back where a blur does: past that many, or drawn into a
     /// target that can't be copied, it draws only its fill. The CPU painter draws its blur, if it
-    /// has one, without the glass.
+    /// has one, without the glass. Its pipeline is not prewarmed or precompiled: it compiles on
+    /// the first frame that draws a lens.
     pub fn backdrop_lens(mut self, lens: Lens) -> Self {
         self.vis.cold_mut().backdrop_lens = Some(lens);
         self

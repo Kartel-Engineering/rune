@@ -12,8 +12,10 @@
 // steep shoulder. The optics follow rune-light's glass.wgsl. Everything is premultiplied, as
 // the copied backdrop is. The backdrop is the sharp copy; when
 // the record also blurs (frosted glass), the flat top shows the blur and the shoulder fades from
-// sharp at the rim to the blur at the top. Prepended with `clip.wgsl`; group 0 is the uber
-// shader's.
+// sharp at the rim to the blur at the top. The shoulder squeezes many backdrop pixels into one,
+// so each ray reads the backdrop prefiltered at its footprint, from the blur's down chain, as
+// rune-light's glass reads its pyramid: text that moves under the rim stays smooth instead of
+// aliasing. Prepended with `clip.wgsl`; group 0 is the uber shader's.
 
 struct Globals {
     viewport: vec2<f32>,
@@ -36,6 +38,11 @@ struct Level {
 @group(1) @binding(2) var<uniform> u: Level;
 // The window's pixels below the record, in window device pixels.
 @group(1) @binding(3) var sharp: texture_2d<f32>;
+// The blur's down chain over the record's region, every level: level m is a prefilter about
+// 2^(m+1) device pixels wide. Placed as `blurred` is (`u.place`).
+@group(1) @binding(4) var prefiltered: texture_2d<f32>;
+// The coarsest level of `prefiltered` a ray reads (`LENS_LEVELS` in backdrop_blur.rs, less one).
+const TOP: f32 = 4.0;
 
 struct In {
     @builtin(vertex_index) vi: u32,
@@ -141,12 +148,17 @@ fn env(d: vec3<f32>, light: f32) -> vec3<f32> {
 }
 
 // The backdrop at q, kept inside what was copied: the rect plus twice the glass's height
-// (`prepare_backdrop_blur`'s reach).
-// `frost` (0…1) mixes in the record's blur.
-fn backdrop(k: Slab, q0: vec2<f32>, frost: f32) -> vec4<f32> {
+// (`prepare_backdrop_blur`'s reach). `radius` (device px) prefilters it, as rune-light's `ui_at`:
+// sharp up to 1, the down chain's level log2(radius) − 1 from 3. `frost` (0…1) mixes in the
+// record's blur.
+fn backdrop(k: Slab, q0: vec2<f32>, frost: f32, radius: f32) -> vec4<f32> {
     let r = (k.s.x + k.s.z) * 2.0;
     let q = clamp(q0, k.rect.xy - vec2<f32>(r), k.rect.xy + k.rect.zw + vec2<f32>(r));
     var c = textureSampleLevel(sharp, smp, q / vec2<f32>(textureDimensions(sharp)), 0.0);
+    if (radius > 1.0) {
+        let lod = clamp(log2(radius) - 1.0, 0.0, TOP);
+        c = mix(c, textureSampleLevel(prefiltered, smp, (q - u.place.xy) / u.place.zw, lod), smoothstep(1.0, 3.0, radius));
+    }
     if (frost > 0.0) {
         c = mix(c, textureSampleLevel(blurred, smp, (q - u.place.xy) / u.place.zw, 0.0), frost);
     }
@@ -197,6 +209,20 @@ fn spectrum(i: i32) -> vec3<f32> {
     return w[i];
 }
 
+// Where a ray off the shoulder at p reflects to: the backdrop beside the glass, `reach` out.
+fn beside_at(p: vec2<f32>, n: vec3<f32>, zt: f32) -> vec2<f32> {
+    let rr = reflect(vec3<f32>(0.0, 0.0, -1.0), n);
+    let reach = min(zt * length(rr.xy) / max(-rr.z, 1e-3), zt * 4.0);
+    return p + normalize(rr.xy + vec2<f32>(1e-5)) * reach;
+}
+
+// Where the ray at p lands (xy, at index `ior`) and where its reflection reads (zw).
+fn reads(k: Slab, p: vec2<f32>, ior: f32) -> vec4<f32> {
+    let n = normal_at(k, p);
+    let zt = height_d(k, min(sdf(k, p), 0.0));
+    return vec4<f32>(land(k, p, n, zt, ior).xy, beside_at(p, n, zt));
+}
+
 fn shade(k: Slab, p: vec2<f32>, d: f32, optics: vec4<f32>) -> vec4<f32> {
     let ior = k.s.w;
     // Only the flat top is frosted; the shoulder bends the sharp backdrop and frosts toward the top,
@@ -207,7 +233,7 @@ fn shade(k: Slab, p: vec2<f32>, d: f32, optics: vec4<f32>) -> vec4<f32> {
     // The flat top: straight through, less what the top reflects.
     if (-d >= k.s.y + 1.0) {
         let f0 = fresnel(1.0, 1.0, ior);
-        let b = backdrop(k, p, optics.z);
+        let b = backdrop(k, p, optics.z, 0.0);
         let t = (1.0 - f0) * exp(-absorb * k.s.x);
         return vec4<f32>(b.rgb * t + env(vec3<f32>(0.0, 0.0, 1.0), optics.y) * f0 * b.a, b.a);
     }
@@ -217,13 +243,22 @@ fn shade(k: Slab, p: vec2<f32>, d: f32, optics: vec4<f32>) -> vec4<f32> {
     let ac = ior - bc / (0.55 * 0.55);
     let red = land(k, p, n, zt, max(ac + bc / (0.7 * 0.7), 1.0));
     let violet = land(k, p, n, zt, max(ac + bc / (0.4 * 0.4), 1.0));
+    // The footprint: how far what this ray reads moves per device pixel, the larger of x and y
+    // (finite differences half a pixel apart, the rays' spacing), turned into a prefilter radius
+    // as rune-light's glass turns its derivatives.
+    let e = 0.5;
+    let at = reads(k, p, ior);
+    let dx = (reads(k, p + vec2<f32>(e, 0.0), ior) - at) / e;
+    let dy = (reads(k, p + vec2<f32>(0.0, e), ior) - at) / e;
+    let through = clamp(max(length(dx.xy), length(dy.xy)) * 0.5 - 0.5, 0.0, 24.0);
+    let off = clamp(max(length(dx.zw), length(dy.zw)) * 0.5 - 0.5, 0.0, 24.0);
     var trans = vec3<f32>(0.0);
     var wsum = vec3<f32>(0.0);
     var alpha = 0.0;
     for (var i = 0; i < 8; i = i + 1) {
         let w = spectrum(i);
         let q = mix(violet, red, f32(i) / 7.0);
-        let b = backdrop(k, q.xy, frost);
+        let b = backdrop(k, q.xy, frost, through);
         trans = trans + w * b.rgb * exp(-absorb * q.z);
         wsum = wsum + w;
         alpha = alpha + b.a / 8.0;
@@ -233,8 +268,7 @@ fn shade(k: Slab, p: vec2<f32>, d: f32, optics: vec4<f32>) -> vec4<f32> {
     // beside the glass.
     let f = fresnel(n.z, 1.0, ior);
     let rr = reflect(vec3<f32>(0.0, 0.0, -1.0), n);
-    let reach = min(zt * length(rr.xy) / max(-rr.z, 1e-3), zt * 4.0);
-    let beside = backdrop(k, p + normalize(rr.xy + vec2<f32>(1e-5)) * reach, frost).rgb;
+    let beside = backdrop(k, at.zw, frost, off).rgb;
     let refl = mix(env(rr, optics.y) * alpha, beside, smoothstep(0.05, -0.15, rr.z));
     return vec4<f32>(trans * (1.0 - f) + refl * f, alpha);
 }

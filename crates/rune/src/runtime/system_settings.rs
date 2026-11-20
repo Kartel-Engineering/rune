@@ -20,6 +20,13 @@ impl Default for ScrollBarHost {
     }
 }
 
+/// What the host draws with: [`Cx::on_gpu`] and [`Cx::backdrop_copies`].
+#[derive(Default)]
+pub(super) struct GpuSurface {
+    pub(super) on_gpu: bool,
+    pub(super) backdrop_copies: bool,
+}
+
 impl<S: 'static> Runtime<S> {
     pub fn set_system_dark(&mut self, dark: bool) {
         if dark != self.env.system_dark {
@@ -81,18 +88,25 @@ impl<S: 'static> Runtime<S> {
     /// What [`Cx::on_gpu`] reports. Hosts set it as a frame presents on a GPU device and clear
     /// it when that device is lost; a change re-runs the view.
     pub fn set_on_gpu(&mut self, on: bool) {
-        if on != self.on_gpu {
-            self.on_gpu = on;
+        if on != self.gpu.on_gpu {
+            self.gpu.on_gpu = on;
             self.dirty = true;
         }
     }
-    /// What [`Cx::backdrop_copies`] reports. Hosts set it with [`Self::set_on_gpu`], from whether
-    /// the surface they draw into can be copied from; a change re-runs the view.
+    /// What [`Cx::backdrop_copies`] reports; a change re-runs the view. Hosts set it through
+    /// [`Self::set_gpu_surface`].
     pub fn set_backdrop_copies(&mut self, on: bool) {
-        if on != self.backdrop_copies {
-            self.backdrop_copies = on;
+        if on != self.gpu.backdrop_copies {
+            self.gpu.backdrop_copies = on;
             self.dirty = true;
         }
+    }
+    /// What a host knows each frame: the usage of the GPU surface it draws into, or `None` on the
+    /// CPU and after a device loss. Sets [`Cx::on_gpu`] and [`Cx::backdrop_copies`] (a surface
+    /// that can be copied from).
+    pub(crate) fn set_gpu_surface(&mut self, usage: Option<wgpu::TextureUsages>) {
+        self.set_on_gpu(usage.is_some());
+        self.set_backdrop_copies(usage.is_some_and(|u| u.contains(wgpu::TextureUsages::COPY_SRC)));
     }
     pub fn set_system_reduced_motion(&mut self, reduced: bool) {
         if self.system_reduced_motion != reduced {

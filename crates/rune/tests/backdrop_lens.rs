@@ -315,3 +315,68 @@ fn glass_looks_the_same_when_the_frame_blends_in_srgb() {
         assert!(a.iter().zip(b).all(|(p, q)| p.abs_diff(q) <= 3), "at {x},{y}: linear {a:?}, sRGB {b:?}");
     }
 }
+
+/// Fine stripes (1 point dark in every 3) that scroll down `.0` points under a still pill with a
+/// steep, high shoulder, as text scrolls under a docked bar. `.1`: the stripes alone.
+fn stripes(s: &(u32, bool), _: &mut Cx<(u32, bool)>) -> El {
+    let pill = el().absolute(40.0, 45.0).size(120.0, 30.0).radius(15.0);
+    let pill = if s.1 { pill } else { pill.backdrop_lens(Lens::new().thickness(9.0).bevel(3.5).gap(16.0).dispersion(-0.3)) };
+    el().size(W, H).fill(Color::WHITE)
+        .children((0..H as u32 / 3 + 1).map(|k| el().absolute(0.0, (k * 3 + s.0) as f32 - 3.0).size(W, 1.0).fill(Color::BLACK)))
+        .child(pill)
+}
+
+/// Mean change per channel between two frames over the rows `ys`, columns 60..140 (the pill's
+/// straight run).
+fn change(a: &[u8], b: &[u8], ys: std::ops::Range<u32>) -> f32 {
+    let (mut sum, mut n) = (0u32, 0u32);
+    for y in ys {
+        for x in 60..140 {
+            let (p, q) = (at(a, x, y), at(b, x, y));
+            sum += (0..3).map(|c| p[c].abs_diff(q[c]) as u32).sum::<u32>();
+            n += 3;
+        }
+    }
+    sum as f32 / n as f32
+}
+
+/// The shoulder squeezes tens of backdrop pixels into each of its few: it reads them prefiltered
+/// at that footprint, so stripes that scroll under a still lens change its rim far less than they
+/// change the page beside it, instead of flickering.
+#[test]
+fn text_scrolling_under_the_rim_does_not_flicker() {
+    let frames: Vec<_> = (0..3).map(|k| draw((k, false), stripes, 1.0).1).collect();
+    let pages: Vec<_> = (0..3).map(|k| draw((k, true), stripes, 1.0).1).collect();
+    // The rim band: the outer 3 points of the top and bottom shoulders, where they squeeze. Their
+    // inner half point is nearly flat and moves with the page, as it should.
+    let rim = |a: &[u8], b: &[u8]| (change(a, b, 45..48) + change(a, b, 72..75)) / 2.0;
+    let rim = (rim(&frames[0], &frames[1]) + rim(&frames[1], &frames[2])) / 2.0;
+    let page = (change(&pages[0], &pages[1], 45..75) + change(&pages[1], &pages[2], 45..75)) / 2.0;
+    eprintln!("rim {rim:.1}, page {page:.1}, ratio {:.3}", rim / page);
+    assert!(page > 100.0, "the stripes move: {page}");
+    // Unfiltered, the rim changes about 5 % of what the page does; prefiltered, about 1 %.
+    assert!(rim < page * 0.025, "the rim changes {rim:.1} a step, the page beside it {page:.1}");
+}
+
+/// A lens, a frosted lens and a plain fill, for the motion gate's paint probe.
+fn probed(_: &(), _: &mut Cx<()>) -> El {
+    el().size(W, H)
+        .child(el().key("lens").size(40.0, 20.0).backdrop_lens(Lens::new()))
+        .child(el().key("frosted").size(40.0, 20.0).backdrop_lens(Lens::new()).backdrop_blur(6.0))
+        .child(el().key("plain").size(40.0, 20.0).fill(Color::WHITE))
+}
+
+#[test]
+fn the_motion_gate_counts_a_lens_as_backdrop_paint() {
+    use rune::motion_gate::check::paint::S_BACKDROP;
+    let mut run = rune::motion_gate::Run::new(Runtime::new((), probed, (W, H), Env::new(false, 1.0)), 60.0);
+    run.step_n(1);
+    let last = run.rec.frames - 1;
+    let backdrop = |key: &str| {
+        let path = run.rt.elements().into_iter().find(|e| e.key.as_deref() == Some(key)).unwrap().path;
+        run.rec.tracks.iter().find(|t| t.path == path).and_then(|t| t.paint_at(last)).unwrap().sizes[S_BACKDROP]
+    };
+    assert!(backdrop("lens") > 0.0, "a lens without a blur still paints its backdrop");
+    assert_eq!(backdrop("frosted"), 6.0, "a frosted lens reports its blur");
+    assert_eq!(backdrop("plain"), 0.0, "no lens, no blur");
+}
