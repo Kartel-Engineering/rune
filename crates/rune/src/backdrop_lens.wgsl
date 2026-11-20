@@ -146,11 +146,30 @@ fn env(d: vec3<f32>, light: f32) -> vec3<f32> {
 fn backdrop(k: Slab, q0: vec2<f32>, frost: f32) -> vec4<f32> {
     let r = (k.s.x + k.s.z) * 2.0;
     let q = clamp(q0, k.rect.xy - vec2<f32>(r), k.rect.xy + k.rect.zw + vec2<f32>(r));
-    let s = textureSampleLevel(sharp, smp, q / vec2<f32>(textureDimensions(sharp)), 0.0);
-    if (frost <= 0.0) {
-        return s;
+    var c = textureSampleLevel(sharp, smp, q / vec2<f32>(textureDimensions(sharp)), 0.0);
+    if (frost > 0.0) {
+        c = mix(c, textureSampleLevel(blurred, smp, (q - u.place.xy) / u.place.zw, 0.0), frost);
     }
-    return mix(s, textureSampleLevel(blurred, smp, (q - u.place.xy) / u.place.zw, 0.0), frost);
+    return linear(c);
+}
+
+// The optics work in linear light. A frame that blends in sRGB encoding (`g.flags.x`) holds
+// encoded values in its copy: `linear` decodes what the glass reads and `encoded` encodes what it
+// writes, both premultiplied.
+fn linear(c: vec4<f32>) -> vec4<f32> {
+    if (g.flags.x < 0.5 || c.a <= 0.0) {
+        return c;
+    }
+    let v = clamp(c.rgb / c.a, vec3<f32>(0.0), vec3<f32>(1.0));
+    return vec4<f32>(select(pow((v + 0.055) / 1.055, vec3<f32>(2.4)), v / 12.92, v <= vec3<f32>(0.04045)) * c.a, c.a);
+}
+
+fn encoded(c: vec4<f32>) -> vec4<f32> {
+    if (g.flags.x < 0.5 || c.a <= 0.0) {
+        return c;
+    }
+    let v = clamp(c.rgb / c.a, vec3<f32>(0.0), vec3<f32>(1.0));
+    return vec4<f32>(select(1.055 * pow(v, vec3<f32>(1.0 / 2.4)) - 0.055, v * 12.92, v <= vec3<f32>(0.0031308)) * c.a, c.a);
 }
 
 // Where a ray that enters the top at p (height zt, normal n, index ior) lands on the backdrop
@@ -229,7 +248,7 @@ fn fs(i: Out) -> @location(0) vec4<f32> {
         discard;
     }
     if (-d >= k.s.y + 1.0) {
-        return shade(k, i.p, d, i.optics) * cov;
+        return encoded(shade(k, i.p, d, i.optics)) * cov;
     }
     // The shoulder bends fastest: four rays on a rotated grid, as rune-light's glass, so the rim's
     // fringe does not stair-step.
@@ -239,5 +258,5 @@ fn fs(i: Out) -> @location(0) vec4<f32> {
         let q = i.p + o[n];
         acc = acc + shade(k, q, min(sdf(k, q), 0.0), i.optics);
     }
-    return acc * 0.25 * cov;
+    return encoded(acc * 0.25) * cov;
 }

@@ -40,12 +40,20 @@ fn split(look: &Look, _: &mut Cx<Look>) -> El {
 
 /// `view` over `state` drawn by the GPU renderer at `scale`, into a target that can be copied.
 fn draw<S: 'static>(state: S, view: fn(&S, &mut Cx<S>) -> El, scale: f32) -> (Runtime<S>, Vec<u8>) {
+    draw_in(state, view, scale, false)
+}
+
+/// `draw`, blending in sRGB encoding when `srgb` (as a browser canvas does) or in linear light.
+fn draw_in<S: 'static>(state: S, view: fn(&S, &mut Cx<S>) -> El, scale: f32, srgb: bool) -> (Runtime<S>, Vec<u8>) {
     let gpu = Gpu::headless();
     let mut rt = Runtime::new(state, view, (W, H), Env::new(false, scale));
+    rt.set_srgb_blend(srgb);
     rt.frame(0.0);
     let size = ((W * scale) as u32, (H * scale) as u32);
-    let mut renderer = Renderer::new(&gpu.device, OFFSCREEN_FORMAT);
-    let target = Offscreen::new(&gpu.device, size.0, size.1);
+    let format = if srgb { OFFSCREEN_FORMAT.remove_srgb_suffix() } else { OFFSCREEN_FORMAT };
+    let mut renderer = Renderer::new(&gpu.device, format);
+    renderer.set_srgb_blend(srgb);
+    let target = Offscreen::with_format(&gpu.device, size.0, size.1, format);
     renderer.prepare(&gpu.device, &gpu.queue, &mut rt.text.atlas, &rt.instances, size);
     let mut encoder = gpu.device.create_command_encoder(&Default::default());
     renderer.draw(&mut encoder, &target.view, [0.0, 0.0, 0.0, 1.0]);
@@ -294,4 +302,16 @@ fn a_view_reads_whether_backdrop_effects_draw() {
     rt.set_backdrop_copies(false);
     rt.frame(1.0 / 60.0);
     assert_eq!(label(&rt), "fill", "its device was lost");
+}
+
+/// A frame that blends in sRGB encoding (a browser canvas) holds encoded colours. The glass
+/// bends and dims light, not the encoding, so it draws what it draws in a linear frame.
+#[test]
+fn glass_looks_the_same_when_the_frame_blends_in_srgb() {
+    let (_, linear) = draw_in(Look::Lens, split, 1.0, false);
+    let (_, srgb) = draw_in(Look::Lens, split, 1.0, true);
+    for (x, y) in [(100, 30), (100, 50), (100, 66), (100, 86), (100, 97), (45, 60), (155, 60)] {
+        let (a, b) = (at(&linear, x, y), at(&srgb, x, y));
+        assert!(a.iter().zip(b).all(|(p, q)| p.abs_diff(q) <= 3), "at {x},{y}: linear {a:?}, sRGB {b:?}");
+    }
 }
