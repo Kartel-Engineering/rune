@@ -402,3 +402,12 @@ fn a_prism_splits_a_light_edge_under_its_rim_into_red() {
     let mid = at(&px, 100, PRISM_SPLIT as u32 + 8);
     assert!(mid[0] < 10 && mid[1] < 10 && mid[2] < 10, "the middle stays black: {mid:?}");
 }
+
+#[test]
+fn a_prism_rings_its_edge_just_outside_the_element() {
+    let (_, px) = draw((), prism_split, 1.0);
+    // The ring lies over the edge, past the element's rect: the row just below the pill, over black,
+    // is a dim blue-grey, not black.
+    let c = at(&px, (PILL[0] + PILL[2] / 2.0) as u32, (PILL[1] + PILL[3]) as u32);
+    assert!(c.iter().take(3).all(|&v| (20..140).contains(&v)), "below the bottom edge: {c:?}");
+}
