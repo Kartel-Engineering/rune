@@ -76,7 +76,7 @@ struct Out {
 @vertex
 fn vs(i: In) -> Out {
     let corner = vec2<f32>(f32(i.vi & 1u), f32(i.vi >> 1u));
-    let p = i.rect.xy - vec2<f32>(1.0) + corner * (i.rect.zw + vec2<f32>(2.0));
+    let p = i.rect.xy - vec2<f32>(2.0) + corner * (i.rect.zw + vec2<f32>(4.0));
     let size_px = select(g.viewport, projection.zw, projection.z > 0.0);
     let local = p - projection.xy;
     var o: Out;
@@ -280,8 +280,7 @@ fn fs(i: Out) -> @location(0) vec4<f32> {
     let k = Slab(i.rect, i.radii, i.slab);
     let d = sdf(k, i.p);
     if (i.prism > 0.5) {
-        let c = prism(k, i.p, i.optics.w);
-        let o = prism_out(c, clamp(0.5 - d, 0.0, 1.0)) * clip_alpha(i.p, i.clip, i.fade) * i.alpha;
+        let o = prism_out(prism(k, i.p, i.optics.w)) * clip_alpha(i.p, i.clip, i.fade) * i.alpha;
         if (o.a <= 0.0) {
             discard;
         }
