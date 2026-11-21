@@ -278,19 +278,29 @@ fn prism_light(l: array<f32, 5>, n: vec2<f32>, t: f32) -> f32 {
 }
 
 // The prism at device pixel p: the glass (straight, sRGB-encoded), its own edge's signed distance in
-// device pixels, and the ring (straight colour, alpha). `kp` is device pixels per point.
+// device pixels, and the ring (straight colour, alpha). `kp` is device pixels per point: the ring
+// and the edge are in points. The bend, gain and glow are in units of the corner radius (`prism_unit`).
 struct Prism { glass: vec3<f32>, d: f32, ring: vec4<f32> };
 
+// Device pixels per unit of depth: the fit's pill has a 41 point radius, so its numbers are in 41ths
+// of the largest corner radius (at most half the short side, at least one pixel). A pill of any size
+// shows the same bands, smaller; a sharp rect barely bends.
+fn prism_unit(k: Slab) -> f32 {
+    let r = max(max(abs(k.radii.x), abs(k.radii.y)), max(abs(k.radii.z), abs(k.radii.w)));
+    return max(min(r, 0.5 * min(k.rect.z, k.rect.w)), 1.0) / 41.0;
+}
+
 fn prism(k: Slab, p: vec2<f32>, kp: f32) -> Prism {
+    let u = prism_unit(k);
     let o = array<vec2<f32>, 4>(vec2<f32>(-0.125, -0.375), vec2<f32>(0.375, -0.125), vec2<f32>(0.125, 0.375), vec2<f32>(-0.375, 0.125));
     var acc = vec3<f32>(0.0);
     for (var s = 0; s < 4; s = s + 1) {
         let q = p + o[s];
         let n = prism_normal(k, q);
         let th = atan2(n.y, n.x);
-        let t = max(-prism_sdf(k, q, n, kp), 0.0) / kp;
+        let t = max(-prism_sdf(k, q, n, kp), 0.0) / u;
         let a = prism_harm(PRISM_HA, th);
-        let bend = prism_bend(t * max(a.y, 0.2)) * a.x * prism_harm(PRISM_HK, th) * kp;
+        let bend = prism_bend(t * max(a.y, 0.2)) * a.x * prism_harm(PRISM_HK, th) * u;
         for (var c = 0; c < 4; c = c + 1) {
             acc = acc + prism_read(k, q - n * bend[c]) * PRISM_W[c];
         }
@@ -299,7 +309,7 @@ fn prism(k: Slab, p: vec2<f32>, kp: f32) -> Prism {
     let n = prism_normal(k, p);
     let th = atan2(n.y, n.x);
     let d = prism_sdf(k, p, n, kp);
-    let t = max(-d, 0.0) / kp;
+    let t = max(-d, 0.0) / u;
     let a = prism_harm(PRISM_HA, th);
     let hs = prism_harm(PRISM_HS, th);
     let v = (p.y - k.rect.y) / k.rect.w - 0.5;

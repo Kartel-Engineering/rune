@@ -74,7 +74,9 @@ impl Lens {
     /// different distance per colour, red farthest, so light and dark edges under the rim split into
     /// bands of yellow, red and cyan; the middle shows the backdrop dimmed and warmed a little, two
     /// lights glint off the rim and a thin ring traces it. It reads nothing outside the element. Its
-    /// numbers are fixed (fitted to one reference look) and in points; the slab's settings don't
+    /// numbers are fixed (fitted to one reference look, a pill with a 41 point radius): the bend and
+    /// shading scale with the largest corner radius, so a small pill shows the same bands, smaller;
+    /// the ring stays about a pixel wide. A sharp corner barely bends. The slab's settings don't
     /// apply to it, and a blur does not frost it.
     pub const fn prism() -> Lens { Lens { prism: true, ..Lens::new() } }
     /// Height the flat top rises over the rim.

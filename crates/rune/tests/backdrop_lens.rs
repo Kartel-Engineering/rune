@@ -411,3 +411,19 @@ fn a_prism_rings_its_edge_just_outside_the_element() {
     let c = at(&px, (PILL[0] + PILL[2] / 2.0) as u32, (PILL[1] + PILL[3]) as u32);
     assert!(c.iter().take(3).all(|&v| (20..140).contains(&v)), "below the bottom edge: {c:?}");
 }
+
+/// A small `Lens::prism()` pill (radius 15) over white.
+fn small_prism(_: &(), _: &mut Cx<()>) -> El {
+    el().size(W, H).fill(Color::WHITE).child(el().absolute(40.0, 45.0).size(120.0, 30.0).radius(15.0).backdrop_lens(Lens::prism()))
+}
+
+#[test]
+fn a_small_prism_over_white_is_light_inside() {
+    let (_, px) = draw((), small_prism, 1.0);
+    // Its bend scales with the radius, so it reads white from inside the element, not the
+    // transparent black outside it.
+    for (x, y) in [(100, 60), (60, 60), (140, 60), (100, 50), (100, 70), (48, 60)] {
+        let c = at(&px, x, y);
+        assert!(c.iter().take(3).all(|&v| v > 180), "inside at ({x}, {y}): {c:?}");
+    }
+}
