@@ -54,6 +54,7 @@ pub struct Lens {
     ior: f32,
     dispersion: f32,
     light: f32,
+    prism: bool,
 }
 
 impl Default for Lens {
@@ -68,7 +69,14 @@ const MAX_PT: f32 = 1000.0;
 impl Lens {
     /// Crown glass: 8 points thick with an 8-point shoulder, 4 points above the backdrop, index
     /// 1.5, dispersion 0.03.
-    pub const fn new() -> Lens { Lens { thickness: 8.0, bevel: 8.0, gap: 4.0, ior: 1.5, dispersion: 0.03, light: 1.0 } }
+    pub const fn new() -> Lens { Lens { thickness: 8.0, bevel: 8.0, gap: 4.0, ior: 1.5, dispersion: 0.03, light: 1.0, prism: false } }
+    /// Liquid glass instead of the slab: the backdrop near the rim is pulled in from the edge by a
+    /// different distance per colour, red farthest, so light and dark edges under the rim split into
+    /// bands of yellow, red and cyan; the middle shows the backdrop dimmed and warmed a little, two
+    /// lights glint off the rim and a thin ring traces it. It reads nothing outside the element. Its
+    /// numbers are fixed (fitted to one reference look) and in points; the slab's settings don't
+    /// apply to it, and a blur does not frost it.
+    pub const fn prism() -> Lens { Lens { prism: true, ..Lens::new() } }
     /// Height the flat top rises over the rim.
     pub const fn thickness(mut self, pt: f32) -> Lens { self.thickness = finite(pt, 0.0, 8.0).min(MAX_PT); self }
     /// Width of the rounded shoulder from the rim to the flat top.
@@ -85,8 +93,8 @@ impl Lens {
 
     /// The record's `uv`: thickness, bevel and gap in device pixels, and the index.
     pub(crate) fn uv(&self, k_px: f32) -> [f32; 4] { [self.thickness * k_px, self.bevel * k_px, self.gap * k_px, self.ior] }
-    /// The record's `border`: dispersion and light.
-    pub(crate) fn border(&self) -> [f32; 4] { [self.dispersion, self.light, 0.0, 0.0] }
+    /// The record's `border`: dispersion, light, and 1 for a prism.
+    pub(crate) fn border(&self) -> [f32; 4] { [self.dispersion, self.light, if self.prism { 1.0 } else { 0.0 }, 0.0] }
 }
 
 impl El {

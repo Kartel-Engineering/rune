@@ -88,8 +88,10 @@ pub(crate) const BLUR_WGSL: &str = include_str!("../backdrop_blur.wgsl");
 /// The composite's shader: the clip helpers, then `backdrop_composite.wgsl`.
 pub(crate) fn composite_wgsl() -> String { format!("{CLIP_WGSL}\n{}", include_str!("../backdrop_composite.wgsl")) }
 
-/// The lens composite's shader: the clip helpers, then `backdrop_lens.wgsl`.
-pub(crate) fn lens_wgsl() -> String { format!("{CLIP_WGSL}\n{}", include_str!("../backdrop_lens.wgsl")) }
+/// The lens composite's shader: the clip helpers, `backdrop_lens.wgsl`, then `backdrop_prism.wgsl`.
+pub(crate) fn lens_wgsl() -> String {
+    format!("{CLIP_WGSL}\n{}\n{}", include_str!("../backdrop_lens.wgsl"), include_str!("../backdrop_prism.wgsl"))
+}
 
 /// The glass composite (`El::backdrop_lens`), made on the first lensed record.
 struct Lens {

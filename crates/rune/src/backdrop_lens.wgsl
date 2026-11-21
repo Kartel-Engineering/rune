@@ -49,7 +49,7 @@ struct In {
     @location(0) rect: vec4<f32>,
     @location(1) radii: vec4<f32>,
     @location(2) fill: vec4<f32>,
-    // x: dispersion, y: light.
+    // x: dispersion, y: light, z: 1 for a prism (`backdrop_prism.wgsl`).
     @location(3) border: vec4<f32>,
     // x: blur sigma in device px (0: sharp).
     @location(4) params: vec4<f32>,
@@ -70,6 +70,7 @@ struct Out {
     @location(6) @interpolate(flat) slab: vec4<f32>,
     // dispersion, light, frosted (0 or 1), device px per point.
     @location(7) @interpolate(flat) optics: vec4<f32>,
+    @location(8) @interpolate(flat) prism: f32,
 };
 
 @vertex
@@ -88,6 +89,7 @@ fn vs(i: In) -> Out {
     o.fade = i.fade;
     o.slab = i.uv;
     o.optics = vec4<f32>(i.border.x, i.border.y, select(0.0, 1.0, i.params.x > 0.0), max(i.params.w, 1e-3));
+    o.prism = i.border.z;
     return o;
 }
 
@@ -277,6 +279,14 @@ fn shade(k: Slab, p: vec2<f32>, d: f32, optics: vec4<f32>) -> vec4<f32> {
 fn fs(i: Out) -> @location(0) vec4<f32> {
     let k = Slab(i.rect, i.radii, i.slab);
     let d = sdf(k, i.p);
+    if (i.prism > 0.5) {
+        let c = prism(k, i.p, i.optics.w);
+        let o = prism_out(c, clamp(0.5 - d, 0.0, 1.0)) * clip_alpha(i.p, i.clip, i.fade) * i.alpha;
+        if (o.a <= 0.0) {
+            discard;
+        }
+        return o;
+    }
     let cov = clamp(0.5 - d, 0.0, 1.0) * clip_alpha(i.p, i.clip, i.fade) * i.alpha;
     if (cov <= 0.0) {
         discard;

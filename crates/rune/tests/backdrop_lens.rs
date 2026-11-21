@@ -380,3 +380,25 @@ fn the_motion_gate_counts_a_lens_as_backdrop_paint() {
     assert_eq!(backdrop("frosted"), 6.0, "a frosted lens reports its blur");
     assert_eq!(backdrop("plain"), 0.0, "no lens, no blur");
 }
+
+/// The prism's split: a little below the pill's middle, so its lower half has black that the rim
+/// does not reach.
+const PRISM_SPLIT: f32 = 63.0;
+
+/// White over black, a `Lens::prism()` pill across the line.
+fn prism_split(_: &(), _: &mut Cx<()>) -> El {
+    el().size(W, H).fill(Color::WHITE)
+        .child(el().absolute(0.0, PRISM_SPLIT).size(W, H - PRISM_SPLIT).fill(Color::BLACK))
+        .child(el().absolute(PILL[0], PILL[1]).size(PILL[2], PILL[3]).radius(40.0).backdrop_lens(Lens::prism()))
+}
+
+#[test]
+fn a_prism_splits_a_light_edge_under_its_rim_into_red() {
+    let (_, px) = draw((), prism_split, 1.0);
+    // The bottom rim pulls the white from above the line down over the black, red farthest: a band
+    // of red there, and black in the middle.
+    let red = (PRISM_SPLIT as u32 + 2..(PILL[1] + PILL[3]) as u32).filter(|&y| { let c = at(&px, 100, y); c[0] > 150 && c[2] < 60 }).count();
+    assert!(red >= 2, "red rows under the bottom rim: {red}");
+    let mid = at(&px, 100, PRISM_SPLIT as u32 + 8);
+    assert!(mid[0] < 10 && mid[1] < 10 && mid[2] < 10, "the middle stays black: {mid:?}");
+}
