@@ -117,6 +117,9 @@ context menus via `.at(x, y)`), Tooltip (compact, standard, large), HoverCard, T
 ToastRegion, Card, List, Accordion, Collapsible, Badge, Divider, Keybind, Spinner, Loader,
 Progress, ProgressCircle, SegmentedControl.
 
+`glass(el, radius)` makes a pill or a floating bar liquid glass (`Lens::prism()` and its two
+shadows, no fill). Call it only while `glass_draws(cx)` is true and fill the element otherwise.
+
 `Button::new(label).rolling("import-label")` rolls the label's changed characters
 (`RollingText`) and springs the button's width with it; `.label_with(|font, ink| ..)` draws any
 label element in the button's font and ink. The text stays the button's accessible label.
