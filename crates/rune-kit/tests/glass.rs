@@ -14,16 +14,13 @@ fn lenses(rt: &Runtime<()>) -> Vec<[f32; 4]> {
 }
 
 #[test]
-fn a_pill_is_prism_glass_with_both_shadows_scaled_to_its_radius() {
+fn a_pill_is_prism_glass_with_one_close_shadow_scaled_to_its_radius() {
     let mut rt = Runtime::new((), pill, (200.0, 120.0), Env::new(false, 1.0));
     rt.set_on_gpu(true);
     rt.set_backdrop_copies(true);
     rt.frame(0.0);
     let k = 30.0 / 41.0;
-    let shadow = |x: f32, y: f32, blur: f32, spread: f32, a: f32| Shadow {
-        x: x * k, y: y * k, blur: blur * k, spread: spread * k, color: Color::BLACK.alpha(a), inset: false,
-    };
-    let want = [shadow(-21.76, 63.67, 122.47, 57.47, 0.109), shadow(3.28, 9.82, 33.0, 14.47, 0.118)];
+    let want = [Shadow { x: 3.28 * k, y: 9.82 * k, blur: 33.0 * k, color: Color::BLACK.alpha(0.118), ..Default::default() }];
     assert_eq!(rt.presented_pose("pill").unwrap().shadows(), &want[..]);
     let lens = lenses(&rt);
     assert_eq!(lens.len(), 1, "one lens");

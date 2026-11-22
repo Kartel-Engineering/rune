@@ -1,5 +1,4 @@
-//! Liquid glass for pills and floating bars: `Lens::prism()` with the two soft shadows it was
-//! fitted with.
+//! Liquid glass for pills and floating bars: `Lens::prism()` with one close, soft shadow.
 
 use rune::{Color, Cx, El, Lens, Shadow};
 
@@ -10,7 +9,7 @@ pub fn glass_draws<S>(cx: &Cx<S>) -> bool {
     cx.backdrop_copies() && cx.on_gpu() && !cx.is_reduced_motion()
 }
 
-/// `el` as liquid glass with corner radius `radius`: `Lens::prism()` and its two soft shadows,
+/// `el` as liquid glass with corner radius `radius`: `Lens::prism()` and one close, soft shadow,
 /// drawn for a 41 point radius and scaled to this one. No fill: what is behind shows through.
 ///
 /// Call it only while [`glass_draws`] is true, and give the element a solid fill otherwise. Where
@@ -31,17 +30,9 @@ pub fn glass_draws<S>(cx: &Cx<S>) -> bool {
 /// pills and bars, not window-sized panels: each pixel costs about three times a plain lens.
 /// Inside a see-through layer (`El::layer_opacity`) it reads the backdrop as opaque and draws dark.
 pub fn glass(el: El, radius: f32) -> El {
+    // The close shadow of the look the prism was fitted to, without its spread: it stays under
+    // the element, so a small pill on a dark page gets no dark cloud around it.
     let k = radius / 41.0;
-    let shadow = |x: f32, y: f32, blur: f32, spread: f32, a: f32| Shadow {
-        x: x * k,
-        y: y * k,
-        blur: blur * k,
-        spread: spread * k,
-        color: Color::BLACK.alpha(a),
-        inset: false,
-    };
-    el.radius(radius)
-        .box_shadow(shadow(-21.76, 63.67, 122.47, 57.47, 0.109))
-        .box_shadow(shadow(3.28, 9.82, 33.0, 14.47, 0.118))
-        .backdrop_lens(Lens::prism())
+    let shadow = Shadow { x: 3.28 * k, y: 9.82 * k, blur: 33.0 * k, color: Color::BLACK.alpha(0.118), ..Default::default() };
+    el.radius(radius).box_shadow(shadow).backdrop_lens(Lens::prism())
 }
