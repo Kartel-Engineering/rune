@@ -466,11 +466,15 @@ fn a_prism_with_no_split_has_no_colour_bands() {
 
 #[test]
 fn a_prism_with_ring_zero_has_no_ring() {
+    let (_, ringed) = draw((same as fn(Lens) -> Lens, 0.0), tuned, 1.0);
     let (_, flat) = draw(((|l: Lens| l.ring(0.0)) as fn(Lens) -> Lens, 0.0), tuned, 1.0);
-    // The row just below the pill lies over black: `a_prism_rings_its_edge_just_outside_the_element`
-    // finds the ring there, ring 0 leaves it black.
-    let c = at(&flat, (PILL[0] + PILL[2] / 2.0) as u32, (PILL[1] + PILL[3]) as u32);
-    assert!(c.iter().take(3).all(|&v| v < 10), "below the bottom edge: {c:?}");
+    // The row just below the pill lies over black: the fitted prism's ring shows there, ring 0
+    // leaves it black, and the glass above it still draws.
+    let (x, y) = ((PILL[0] + PILL[2] / 2.0) as u32, (PILL[1] + PILL[3]) as u32);
+    assert!(at(&ringed, x, y).iter().take(3).all(|&v| (20..140).contains(&v)), "the ring: {:?}", at(&ringed, x, y));
+    assert!(at(&flat, x, y).iter().take(3).all(|&v| v < 10), "below the bottom edge: {:?}", at(&flat, x, y));
+    let bands = (PRISM_SPLIT as u32..y - 2).map(|y| { let c = at(&flat, 100, y); c[..3].iter().max().unwrap() - c[..3].iter().min().unwrap() }).max().unwrap();
+    assert!(bands > 100, "the glass still bends the edge into colours: {bands}");
 }
 
 #[test]

@@ -71,3 +71,17 @@ fn the_default_settings_as_json() {
     let g = rune_kit::Glass { tint: 0.08, frost: 12.0, shadow_x: -1.23456, ..Default::default() };
     assert!(g.to_json().contains(r#""frost":12,"tint":0.08,"shadow_x":-1.235,"#), "{}", g.to_json());
 }
+
+#[test]
+fn settings_that_are_not_numbers_draw_no_shadow_instead_of_a_broken_one() {
+    fn broken(_: &(), _: &mut Cx<()>) -> El {
+        let g = rune_kit::Glass { shadow_x: f32::NAN, shadow_y: f32::INFINITY, shadow_spread: f32::NEG_INFINITY, shadow_alpha: f32::NAN, ..rune_kit::Glass::DEFAULT };
+        el().size(200.0, 120.0).child(rune_kit::glass_with(el().key("pill").absolute(20.0, 20.0).size(120.0, 60.0), 30.0, &g, Color::WHITE))
+    }
+    let mut rt = Runtime::new((), broken, (200.0, 120.0), Env::new(false, 1.0));
+    rt.set_on_gpu(true);
+    rt.set_backdrop_copies(true);
+    rt.frame(0.0);
+    let drawn = format!("{:?}", rt.instances);
+    assert!(!drawn.contains("NaN") && !drawn.contains("inf"), "{drawn}");
+}

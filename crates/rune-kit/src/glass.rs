@@ -37,12 +37,14 @@ pub fn glass_with(el: El, radius: f32, g: &Glass, tint: Color) -> El {
     // The shadow is the close one of the look the prism was fitted to, without its spread by
     // default: it stays under the element, so a small pill on a dark page gets no dark cloud.
     let k = radius / 41.0;
+    // A value that is not a number draws as none; a huge one stops at 1000 points.
+    let fin = |v: f32| if v.is_finite() { v.clamp(-1000.0, 1000.0) } else { 0.0 };
     let shadow = Shadow {
-        x: g.shadow_x * k,
-        y: g.shadow_y * k,
-        blur: g.shadow_blur.max(0.0) * k,
-        spread: g.shadow_spread * k,
-        color: Color::BLACK.alpha(g.shadow_alpha.clamp(0.0, 1.0)),
+        x: fin(g.shadow_x) * k,
+        y: fin(g.shadow_y) * k,
+        blur: fin(g.shadow_blur).max(0.0) * k,
+        spread: fin(g.shadow_spread) * k,
+        color: Color::BLACK.alpha(fin(g.shadow_alpha).clamp(0.0, 1.0)),
         ..Default::default()
     };
     let lens = Lens::prism().bend(g.bend).split(g.split).shade(g.shade).light(g.lights).ring(g.ring);
@@ -78,12 +80,15 @@ pub struct Glass {
 }
 
 impl Default for Glass {
-    fn default() -> Self {
-        Glass { bend: 1.0, split: 1.0, shade: 1.0, lights: 1.0, ring: 1.0, frost: 0.0, tint: 0.0, shadow_x: 3.28, shadow_y: 9.82, shadow_blur: 33.0, shadow_spread: 0.0, shadow_alpha: 0.118 }
-    }
+    fn default() -> Self { Glass::DEFAULT }
 }
 
 impl Glass {
+    /// [`glass`]'s look, for a `const`. Build a `Glass` from this (`Glass { frost: 6.0, ..Glass::DEFAULT }`),
+    /// not from a full literal: a later field then does not break the build.
+    pub const DEFAULT: Glass =
+        Glass { bend: 1.0, split: 1.0, shade: 1.0, lights: 1.0, ring: 1.0, frost: 0.0, tint: 0.0, shadow_x: 3.28, shadow_y: 9.82, shadow_blur: 33.0, shadow_spread: 0.0, shadow_alpha: 0.118 };
+
     /// One flat JSON object: the field names as keys, in order, each number with at most three
     /// decimals.
     pub fn to_json(&self) -> String {
