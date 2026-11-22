@@ -76,7 +76,9 @@ struct Out {
 @vertex
 fn vs(i: In) -> Out {
     let corner = vec2<f32>(f32(i.vi & 1u), f32(i.vi >> 1u));
-    let p = i.rect.xy - vec2<f32>(2.0) + corner * (i.rect.zw + vec2<f32>(4.0));
+    // 2 points of margin, at least 2 px: a prism's ring reaches past the rect.
+    let grow = 2.0 * max(i.params.w, 1.0);
+    let p = i.rect.xy - vec2<f32>(grow) + corner * (i.rect.zw + vec2<f32>(2.0 * grow));
     let size_px = select(g.viewport, projection.zw, projection.z > 0.0);
     let local = p - projection.xy;
     var o: Out;
@@ -281,7 +283,8 @@ fn fs(i: Out) -> @location(0) vec4<f32> {
     let d = sdf(k, i.p);
     if (i.prism > 0.5) {
         let o = prism_out(prism(k, i.p, i.optics.w)) * clip_alpha(i.p, i.clip, i.fade) * i.alpha;
-        if (o.a <= 0.0) {
+        // An element with no area has no glass (and no height to shade by).
+        if (o.a <= 0.0 || min(k.rect.z, k.rect.w) < 1e-3) {
             discard;
         }
         return o;

@@ -427,3 +427,16 @@ fn a_small_prism_over_white_is_light_inside() {
         assert!(c.iter().take(3).all(|&v| v > 180), "inside at ({x}, {y}): {c:?}");
     }
 }
+
+/// A `Lens::prism()` pill with no height over white.
+fn flat_prism(_: &(), _: &mut Cx<()>) -> El {
+    el().size(W, H).fill(Color::WHITE).child(el().absolute(40.0, 60.0).size(120.0, 0.0).radius(15.0).backdrop_lens(Lens::prism()))
+}
+
+#[test]
+fn a_prism_with_no_area_draws_nothing() {
+    for scale in [1.0, 2.0] {
+        let (_, px) = draw((), flat_prism, scale);
+        assert!(px.chunks(4).all(|c| c[..3] == [255, 255, 255]), "at scale {scale}");
+    }
+}

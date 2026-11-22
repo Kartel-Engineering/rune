@@ -600,8 +600,8 @@ impl Renderer {
         // A lens whose pipeline or binding is missing draws only the fill, as an unprepared blur.
         if lens == Some(None) { return; }
         let (origin, size) = self.target_frame(target);
-        // A lens may draw up to 2 px past its rect (`Lens::prism`'s ring); others discard there.
-        let g = if record.lens { 2.0 } else { 0.0 };
+        // A lens may draw up to 2 points past its rect (`Lens::prism`'s ring); others discard there.
+        let g = if record.lens { 2.0 * instance.params[3].max(1.0) } else { 0.0 };
         let (r, c) = ([instance.rect[0] - g, instance.rect[1] - g, instance.rect[2] + 2.0 * g, instance.rect[3] + 2.0 * g], instance.clip);
         let edge = |v: f32, o: f32, max: u32| (v - o).clamp(0.0, max as f32) as u32;
         let (x0, y0) = (edge(r[0].max(c[0]).floor(), origin[0], size[0]), edge(r[1].max(c[1]).floor(), origin[1], size[1]));
