@@ -55,6 +55,10 @@ pub struct Lens {
     dispersion: f32,
     light: f32,
     prism: bool,
+    bend: f32,
+    split: f32,
+    shade: f32,
+    ring: f32,
 }
 
 impl Default for Lens {
@@ -69,15 +73,19 @@ const MAX_PT: f32 = 1000.0;
 impl Lens {
     /// Crown glass: 8 points thick with an 8-point shoulder, 4 points above the backdrop, index
     /// 1.5, dispersion 0.03.
-    pub const fn new() -> Lens { Lens { thickness: 8.0, bevel: 8.0, gap: 4.0, ior: 1.5, dispersion: 0.03, light: 1.0, prism: false } }
+    pub const fn new() -> Lens {
+        Lens { thickness: 8.0, bevel: 8.0, gap: 4.0, ior: 1.5, dispersion: 0.03, light: 1.0, prism: false, bend: 1.0, split: 1.0, shade: 1.0, ring: 1.0 }
+    }
     /// Liquid glass instead of the slab: the backdrop near the rim is pulled in from the edge by a
     /// different distance per colour, red farthest, so light and dark edges under the rim split into
     /// bands of yellow, red and cyan; the middle shows the backdrop dimmed and warmed a little, two
     /// lights glint off the rim and a thin ring traces it. It reads nothing outside the element. Its
     /// numbers are fixed (fitted to one reference look, a pill with a 41 point radius): the bend and
     /// shading scale with the largest corner radius, so a small pill shows the same bands, smaller;
-    /// the ring stays about a pixel wide. A sharp corner barely bends. The slab's settings don't
-    /// apply to it, and a blur does not frost it.
+    /// the ring stays about a pixel wide. A sharp corner barely bends. Of the slab's settings it
+    /// reads only `light`; `bend`, `split`, `shade` and `ring` tune it, each 1 as fitted. With
+    /// `El::backdrop_blur` it is frosted: the middle shows the blur, and the rim's bands, lights
+    /// and ring stay sharp.
     pub const fn prism() -> Lens { Lens { prism: true, ..Lens::new() } }
     /// Height the flat top rises over the rim.
     pub const fn thickness(mut self, pt: f32) -> Lens { self.thickness = finite(pt, 0.0, 8.0).min(MAX_PT); self }
@@ -90,13 +98,31 @@ impl Lens {
     /// n(400 nm) − n(700 nm). Real glass is positive (blue bends most); a negative value swaps the
     /// fringe's order, red bending most.
     pub const fn dispersion(mut self, d: f32) -> Lens { self.dispersion = if d.is_finite() { d.clamp(-0.5, 0.5) } else { 0.03 }; self }
-    /// Brightness of the light the rim reflects; 0 is none.
+    /// Brightness of the light the rim reflects; 0 is none. On a prism: the two lights that glint
+    /// off the rim, times the fitted brightness.
     pub const fn light(mut self, k: f32) -> Lens { self.light = finite(k, 0.0, 1.0); self }
+    /// Prism only: how far the rim pulls the backdrop in, times the fitted distance; 0 bends
+    /// nothing. At most 4.
+    pub const fn bend(mut self, k: f32) -> Lens { self.bend = finite(k, 0.0, 1.0).min(4.0); self }
+    /// Prism only: how far apart the colours land, times the fitted spread about their mean; 0
+    /// moves every colour by the same distance, so no bands. At most 4.
+    pub const fn split(mut self, k: f32) -> Lens { self.split = finite(k, 0.0, 1.0).min(4.0); self }
+    /// Prism only: the fitted darkening and warming by depth, times this; 0 leaves the bent
+    /// backdrop unshaded. At most 2.
+    pub const fn shade(mut self, k: f32) -> Lens { self.shade = finite(k, 0.0, 1.0).min(2.0); self }
+    /// Prism only: the thin ring's opacity, times this; 0 is no ring. At most 4.
+    pub const fn ring(mut self, k: f32) -> Lens { self.ring = finite(k, 0.0, 1.0).min(4.0); self }
 
-    /// The record's `uv`: thickness, bevel and gap in device pixels, and the index.
-    pub(crate) fn uv(&self, k_px: f32) -> [f32; 4] { [self.thickness * k_px, self.bevel * k_px, self.gap * k_px, self.ior] }
-    /// The record's `border`: dispersion, light, and 1 for a prism.
-    pub(crate) fn border(&self) -> [f32; 4] { [self.dispersion, self.light, if self.prism { 1.0 } else { 0.0 }, 0.0] }
+    /// The record's `uv`: thickness, bevel (a prism's bend) and gap in device pixels, and the index.
+    pub(crate) fn uv(&self, k_px: f32) -> [f32; 4] {
+        [self.thickness * k_px, if self.prism { self.bend } else { self.bevel * k_px }, self.gap * k_px, self.ior]
+    }
+    /// The record's `border`: dispersion (a prism's split), light, 1 for a prism, and its ring.
+    pub(crate) fn border(&self) -> [f32; 4] {
+        if self.prism { [self.split, self.light, 1.0, self.ring] } else { [self.dispersion, self.light, 0.0, 0.0] }
+    }
+    /// The record's `params.z`: a prism's shade.
+    pub(crate) fn shade_param(&self) -> f32 { if self.prism { self.shade } else { 0.0 } }
 }
 
 impl El {

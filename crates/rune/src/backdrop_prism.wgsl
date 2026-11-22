@@ -265,12 +265,20 @@ fn prism_sdf(k: Slab, p: vec2<f32>, n: vec2<f32>, kp: f32) -> f32 {
 }
 
 // The backdrop at q in linear light, straight (not premultiplied), 0 outside the element's rect.
-fn prism_read(k: Slab, q: vec2<f32>) -> vec3<f32> {
+// `frost` (0…1) mixes in the record's blur.
+fn prism_read(k: Slab, q: vec2<f32>, frost: f32) -> vec3<f32> {
     let lo = clamp(q - k.rect.xy + vec2<f32>(0.5), vec2<f32>(0.0), vec2<f32>(1.0));
     let hi = clamp(k.rect.xy + k.rect.zw - q + vec2<f32>(0.5), vec2<f32>(0.0), vec2<f32>(1.0));
-    let c = linear(textureSampleLevel(sharp, smp, q / vec2<f32>(textureDimensions(sharp)), 0.0));
-    return c.rgb * (lo.x * lo.y * hi.x * hi.y);
+    var c = textureSampleLevel(sharp, smp, q / vec2<f32>(textureDimensions(sharp)), 0.0);
+    if (frost > 0.0) {
+        c = mix(c, textureSampleLevel(blurred, smp, (q - u.place.xy) / u.place.zw, 0.0), frost);
+    }
+    return linear(c).rgb * (lo.x * lo.y * hi.x * hi.y);
 }
+
+// `v` moved from `base` by `k` times: exactly `v` at 1, so the fitted look keeps its bytes.
+fn prism_k3(v: vec3<f32>, base: vec3<f32>, k: f32) -> vec3<f32> { return select(base + (v - base) * k, v, k == 1.0); }
+fn prism_k4(v: vec4<f32>, base: vec4<f32>, k: f32) -> vec4<f32> { return select(base + (v - base) * k, v, k == 1.0); }
 
 fn prism_light(l: array<f32, 5>, n: vec2<f32>, t: f32) -> f32 {
     let x = (t - l[4]) / max(abs(l[3]), 0.05);
@@ -290,7 +298,9 @@ fn prism_unit(k: Slab) -> f32 {
     return max(min(r, 0.5 * min(k.rect.z, k.rect.w)), 1.0) / 41.0;
 }
 
-fn prism(k: Slab, p: vec2<f32>, kp: f32) -> Prism {
+// `tune`: bend, split, shade and ring (`Lens::prism`), each 1 as fitted; `lights` scales the rim's
+// two lights; `frosted` (0 or 1) shows the record's blur from a little in from the rim.
+fn prism(k: Slab, p: vec2<f32>, kp: f32, tune: vec4<f32>, lights: f32, frosted: f32) -> Prism {
     let u = prism_unit(k);
     let o = array<vec2<f32>, 4>(vec2<f32>(-0.125, -0.375), vec2<f32>(0.375, -0.125), vec2<f32>(0.125, 0.375), vec2<f32>(-0.375, 0.125));
     var acc = vec3<f32>(0.0);
@@ -300,9 +310,12 @@ fn prism(k: Slab, p: vec2<f32>, kp: f32) -> Prism {
         let th = atan2(n.y, n.x);
         let t = max(-prism_sdf(k, q, n, kp), 0.0) / u;
         let a = prism_harm(PRISM_HA, th);
-        let bend = prism_bend(t * max(a.y, 0.2)) * a.x * prism_harm(PRISM_HK, th) * u;
+        let b = prism_bend(t * max(a.y, 0.2)) * a.x * prism_harm(PRISM_HK, th) * u * tune.x;
+        let bend = prism_k4(b, vec4<f32>(0.25 * (b.x + b.y + b.z + b.w)), tune.y);
+        // Past the bands the middle shows the blur.
+        let frost = frosted * smoothstep(10.0, 24.0, t);
         for (var c = 0; c < 4; c = c + 1) {
-            acc = acc + prism_read(k, q - n * bend[c]) * PRISM_W[c];
+            acc = acc + prism_read(k, q - n * bend[c], frost) * PRISM_W[c];
         }
     }
     acc = acc * 0.25;
@@ -313,14 +326,14 @@ fn prism(k: Slab, p: vec2<f32>, kp: f32) -> Prism {
     let a = prism_harm(PRISM_HA, th);
     let hs = prism_harm(PRISM_HS, th);
     let v = (p.y - k.rect.y) / k.rect.w - 0.5;
-    let gain = prism_gain(t) * (1.0 + PRISM_VY * v);
-    let side = vec3<f32>(1.0) + (hs.xyz - vec3<f32>(1.0)) * exp(-t / PRISM_SIDE_W);
-    let glow = max(prism_glow(t) * a.z, 0.0) + prism_light(PRISM_LIGHT1, n, t) + prism_light(PRISM_LIGHT2, n, t);
+    let gain = prism_k3(prism_gain(t) * (1.0 + PRISM_VY * v), vec3<f32>(1.0), tune.z);
+    let side = prism_k3(vec3<f32>(1.0) + (hs.xyz - vec3<f32>(1.0)) * exp(-t / PRISM_SIDE_W), vec3<f32>(1.0), tune.z);
+    let glow = max(prism_glow(t) * a.z, 0.0) + prism_light(PRISM_LIGHT1, n, t) * lights + prism_light(PRISM_LIGHT2, n, t) * lights;
     let lit = clamp(acc * gain * side + vec3<f32>(glow), vec3<f32>(0.0), vec3<f32>(1.0));
     let enc = select(1.055 * pow(lit, vec3<f32>(1.0 / 2.4)) - 0.055, lit * 12.92, lit <= vec3<f32>(0.0031308));
     let r = prism_ring(d / kp);
     let rc = vec3<f32>(1.0) / (vec3<f32>(1.0) + exp(-(r.xyz + prism_harm(PRISM_HC, th).xyz - vec3<f32>(1.0))));
-    let ra = select(0.0, 1.0 / (1.0 + exp(-(r.w + a.w - 1.0))), d / kp <= 1.5);
+    let ra = min(select(0.0, 1.0 / (1.0 + exp(-(r.w + a.w - 1.0))), d / kp <= 1.5) * tune.w, 1.0);
     return Prism(enc, d, vec4<f32>(rc, ra));
 }
 

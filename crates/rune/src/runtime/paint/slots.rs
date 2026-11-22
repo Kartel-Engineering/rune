@@ -49,7 +49,7 @@ pub(super) fn push_backdrop_blur(instances: &mut Vec<Instance>, (sigma, lens): (
         radii: if continuous { radii.map(|v| -v) } else { radii },
         fill: [0.0, 0.0, 0.0, o],
         border: lens.map_or([0.0; 4], |l| l.border()),
-        params: [sigma * k_px, KIND_BACKDROP_BLUR, 0.0, k_px],
+        params: [sigma * k_px, KIND_BACKDROP_BLUR, lens.map_or(0.0, |l| l.shade_param()), k_px],
         uv: lens.map_or([0.0; 4], |l| l.uv(k_px)),
         clip,
         fade: crate::render::pack_fade(fade, fade_origin, clip),

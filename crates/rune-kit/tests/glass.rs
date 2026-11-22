@@ -42,3 +42,32 @@ fn glass_waits_for_a_gpu_that_copies_and_motion_that_is_not_reduced() {
     rt.frame(3.0 / 60.0);
     assert!(lenses(&rt).is_empty(), "reduced motion");
 }
+
+/// The pill built by `glass_with` and the default settings, else as `pill`.
+fn pill_with(_: &(), cx: &mut Cx<()>) -> El {
+    let p = el().key("pill").absolute(20.0, 20.0).size(120.0, 60.0);
+    let p = if rune_kit::glass_draws(cx) { rune_kit::glass_with(p, 30.0, &rune_kit::Glass::default(), Color::WHITE) } else { p };
+    el().size(200.0, 120.0).fill(Color::WHITE).child(p.child(text("Label")))
+}
+
+#[test]
+fn default_settings_build_the_same_glass() {
+    let frame = |view: fn(&(), &mut Cx<()>) -> El| {
+        let mut rt = Runtime::new((), view, (200.0, 120.0), Env::new(false, 1.0));
+        rt.set_on_gpu(true);
+        rt.set_backdrop_copies(true);
+        rt.frame(0.0);
+        format!("{:?}", rt.instances)
+    };
+    assert_eq!(frame(pill_with), frame(pill));
+}
+
+#[test]
+fn the_default_settings_as_json() {
+    assert_eq!(
+        rune_kit::Glass::default().to_json(),
+        r#"{"bend":1,"split":1,"shade":1,"lights":1,"ring":1,"frost":0,"tint":0,"shadow_x":3.28,"shadow_y":9.82,"shadow_blur":33,"shadow_spread":0,"shadow_alpha":0.118}"#
+    );
+    let g = rune_kit::Glass { tint: 0.08, frost: 12.0, shadow_x: -1.23456, ..Default::default() };
+    assert!(g.to_json().contains(r#""frost":12,"tint":0.08,"shadow_x":-1.235,"#), "{}", g.to_json());
+}

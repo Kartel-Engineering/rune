@@ -440,3 +440,46 @@ fn a_prism_with_no_area_draws_nothing() {
         assert!(px.chunks(4).all(|c| c[..3] == [255, 255, 255]), "at scale {scale}");
     }
 }
+
+/// `prism_split` with the prism tuned by `tune` and blurred by `sigma`.
+fn tuned(s: &(fn(Lens) -> Lens, f32), _: &mut Cx<(fn(Lens) -> Lens, f32)>) -> El {
+    el().size(W, H).fill(Color::WHITE)
+        .child(el().absolute(0.0, PRISM_SPLIT).size(W, H - PRISM_SPLIT).fill(Color::BLACK))
+        .child(el().absolute(PILL[0], PILL[1]).size(PILL[2], PILL[3]).radius(40.0).backdrop_lens((s.0)(Lens::prism())).backdrop_blur(s.1))
+}
+
+fn same(l: Lens) -> Lens { l }
+
+#[test]
+fn a_prism_with_no_split_has_no_colour_bands() {
+    let (_, px) = draw((same as fn(Lens) -> Lens, 0.0), tuned, 1.0);
+    let (_, flat) = draw(((|l: Lens| l.split(0.0)) as fn(Lens) -> Lens, 0.0), tuned, 1.0);
+    let (_, unshaded) = draw(((|l: Lens| l.shade(0.0)) as fn(Lens) -> Lens, 0.0), tuned, 1.0);
+    // Under the bottom rim, above the ring: the fitted prism splits the edge into colours, split
+    // 0 leaves only the shading's slight warmth.
+    let hue = |px: &[u8]| (PRISM_SPLIT as u32..(PILL[1] + PILL[3]) as u32 - 2)
+        .map(|y| { let c = at(px, 100, y); c[..3].iter().max().unwrap() - c[..3].iter().min().unwrap() }).max().unwrap();
+    assert!(hue(&px) > 100, "the fitted prism has bands: {}", hue(&px));
+    assert!(hue(&unshaded) > 100, "unshaded, the bands stay: {}", hue(&unshaded));
+    assert!(hue(&flat) < 20, "split 0 has none: {}", hue(&flat));
+}
+
+#[test]
+fn a_prism_with_ring_zero_has_no_ring() {
+    let (_, flat) = draw(((|l: Lens| l.ring(0.0)) as fn(Lens) -> Lens, 0.0), tuned, 1.0);
+    // The row just below the pill lies over black: `a_prism_rings_its_edge_just_outside_the_element`
+    // finds the ring there, ring 0 leaves it black.
+    let c = at(&flat, (PILL[0] + PILL[2] / 2.0) as u32, (PILL[1] + PILL[3]) as u32);
+    assert!(c.iter().take(3).all(|&v| v < 10), "below the bottom edge: {c:?}");
+}
+
+#[test]
+fn a_frosted_prism_blurs_its_middle_and_keeps_its_ring() {
+    let (_, clear) = draw((same as fn(Lens) -> Lens, 0.0), tuned, 1.0);
+    let (_, frosted) = draw((same as fn(Lens) -> Lens, 8.0), tuned, 1.0);
+    // The line between white and black, in the middle: sharp through clear glass, soft frosted.
+    let step = |px: &[u8]| at(px, 100, PRISM_SPLIT as u32 - 2)[0] as i32 - at(px, 100, PRISM_SPLIT as u32 + 2)[0] as i32;
+    assert!(step(&frosted) < step(&clear) - 60, "frosted {} vs clear {}", step(&frosted), step(&clear));
+    let c = at(&frosted, (PILL[0] + PILL[2] / 2.0) as u32, (PILL[1] + PILL[3]) as u32);
+    assert!(c.iter().take(3).all(|&v| (20..140).contains(&v)), "the ring below the bottom edge: {c:?}");
+}

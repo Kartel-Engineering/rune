@@ -49,11 +49,12 @@ struct In {
     @location(0) rect: vec4<f32>,
     @location(1) radii: vec4<f32>,
     @location(2) fill: vec4<f32>,
-    // x: dispersion, y: light, z: 1 for a prism (`backdrop_prism.wgsl`).
+    // x: dispersion (a prism's split), y: light, z: 1 for a prism (`backdrop_prism.wgsl`), w: a
+    // prism's ring.
     @location(3) border: vec4<f32>,
-    // x: blur sigma in device px (0: sharp).
+    // x: blur sigma in device px (0: sharp), z: a prism's shade.
     @location(4) params: vec4<f32>,
-    // thickness, bevel, gap (device px), index of refraction.
+    // thickness, bevel (a prism's bend), gap (device px), index of refraction.
     @location(5) uv: vec4<f32>,
     @location(6) clip: vec4<f32>,
     @location(7) fade: vec4<u32>,
@@ -71,6 +72,8 @@ struct Out {
     // dispersion, light, frosted (0 or 1), device px per point.
     @location(7) @interpolate(flat) optics: vec4<f32>,
     @location(8) @interpolate(flat) prism: f32,
+    // A prism's tuning: bend, split, shade, ring (`Lens::prism`).
+    @location(9) @interpolate(flat) tune: vec4<f32>,
 };
 
 @vertex
@@ -92,6 +95,7 @@ fn vs(i: In) -> Out {
     o.slab = i.uv;
     o.optics = vec4<f32>(i.border.x, i.border.y, select(0.0, 1.0, i.params.x > 0.0), max(i.params.w, 1e-3));
     o.prism = i.border.z;
+    o.tune = vec4<f32>(i.uv.y, i.border.x, i.params.z, i.border.w);
     return o;
 }
 
@@ -282,7 +286,7 @@ fn fs(i: Out) -> @location(0) vec4<f32> {
     let k = Slab(i.rect, i.radii, i.slab);
     let d = sdf(k, i.p);
     if (i.prism > 0.5) {
-        let o = prism_out(prism(k, i.p, i.optics.w)) * clip_alpha(i.p, i.clip, i.fade) * i.alpha;
+        let o = prism_out(prism(k, i.p, i.optics.w, i.tune, i.optics.y, i.optics.z)) * clip_alpha(i.p, i.clip, i.fade) * i.alpha;
         // An element with no area has no glass (and no height to shade by).
         if (o.a <= 0.0 || min(k.rect.z, k.rect.w) < 1e-3) {
             discard;
