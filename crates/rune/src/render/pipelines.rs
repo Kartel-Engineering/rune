@@ -92,6 +92,7 @@ impl Renderer {
             effects: Vec::new(),
             backdrops: Vec::new(),
             backdrop_used: false,
+            relay: None,
             backdrop_blur: None,
             breakers: Default::default(),
             uploads: Default::default(),

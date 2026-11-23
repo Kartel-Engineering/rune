@@ -285,13 +285,15 @@ impl<S> Cx<S> {
         self.on_gpu
     }
     /// Whether this window's own passes can copy its surface, which `El::backdrop_blur` and
-    /// `El::backdrop_lens` need: true on a GPU whose surface allows copies. False on the CPU, on a
-    /// WebGL 2 canvas, after a device loss and in an embedded `LayerHost`; there both effects draw
-    /// only their element's fill, so a view can keep that fill opaque enough to read over sharp
-    /// content. True does not promise that every effect draws: past `MAX_BACKDROP_BLURS` or
-    /// `MAX_BACKDROP_LENSES`, in a pass the app owns (`Renderer::draw_range` from a compositor)
-    /// and in a frame with no pooled backdrop of the target's format, an effect still draws only
-    /// its fill. A view that thins its fill on true keeps to those limits.
+    /// `El::backdrop_lens` need: true on a GPU whose surface allows copies, and on a WebGL 2
+    /// canvas, where a frame with a backdrop effect draws into a texture that can be copied and
+    /// then onto the canvas. False on the CPU, after a device loss and in an embedded `LayerHost`;
+    /// there both effects draw only their element's fill, so a view can keep that fill opaque
+    /// enough to read over sharp content. True does not promise that every effect draws: past
+    /// `MAX_BACKDROP_BLURS` or `MAX_BACKDROP_LENSES`, in a pass the app owns (`Renderer::draw_range`
+    /// from a compositor; on a WebGL 2 canvas, any frame a compositor draws) and in a frame with no
+    /// pooled backdrop of the target's format, an effect still draws only its fill. A view that
+    /// thins its fill on true keeps to those limits.
     /// Headless runs report false unless a test sets it
     /// ([`Runtime::set_backdrop_copies`](crate::Runtime::set_backdrop_copies)).
     pub fn backdrop_copies(&self) -> bool {

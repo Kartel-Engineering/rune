@@ -307,6 +307,7 @@ impl Renderer {
         // what was under it, and Home doesn't).
         if all || !self.backdrop_used {
             self.backdrops.clear();
+            self.relay = None;
             if let Some(blur) = &mut self.backdrop_blur { blur.give_back(); }
         }
         #[cfg(all(feature = "alloc-sites", not(target_arch = "wasm32")))]

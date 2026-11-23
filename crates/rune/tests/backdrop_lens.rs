@@ -295,7 +295,7 @@ fn a_view_reads_whether_backdrop_effects_draw() {
     assert_eq!(label(&rt), "fill", "headless copies nothing");
     rt.set_on_gpu(true);
     rt.frame(1.0 / 60.0);
-    assert_eq!(label(&rt), "fill", "a GPU surface that can't be copied (WebGL 2)");
+    assert_eq!(label(&rt), "fill", "a GPU surface that can't be copied");
     rt.set_backdrop_copies(true);
     rt.frame(1.0 / 60.0);
     assert_eq!(label(&rt), "copies", "a surface that can be copied");

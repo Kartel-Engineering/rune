@@ -28,7 +28,9 @@ impl El {
     /// with it, and its outer shadows leave the blurred interior clear. The first
     /// `MAX_BACKDROP_BLURS` blurred elements in a frame blur; any past that, and any drawn into a
     /// target that can't be copied (no `COPY_SRC`, or a caller's own `wgpu::RenderPass` via
-    /// `Renderer::draw_range`), draw only their fill. Inside an ancestor drawn as one layer
+    /// `Renderer::draw_range`), draw only their fill. A WebGL 2 canvas can't be copied, so there
+    /// Rune draws a frame with a backdrop effect into a texture it can copy, then onto the canvas.
+    /// Inside an ancestor drawn as one layer
     /// (`El::group_opacity`, `El::blur`, `El::cache`) the backdrop is what that layer has drawn
     /// so far, as in CSS.
     pub fn backdrop_blur(mut self, sigma: f32) -> Self {

@@ -43,6 +43,7 @@ mod outlines;
 mod pass;
 use pass::{ActivePass, Backdrop};
 mod pipelines;
+mod relay;
 pub(crate) mod surface_alpha;
 pub(crate) mod translucency;
 mod uber_wgsl;
@@ -835,6 +836,8 @@ pub struct Renderer {
     backdrops: Vec<Backdrop>,
     /// The last prepared frame had an effect reading the backdrop: a rest keeps the copies.
     backdrop_used: bool,
+    /// The frame `draw_relayed` draws when its target can't be copied, kept like the copies.
+    relay: Option<relay::Relay>,
     /// Pipelines and pyramid for backdrop blur records, built on the first one.
     backdrop_blur: Option<backdrop_blur::BackdropBlur>,
     /// Which lazily built pipelines the device took (`breaker`).
