@@ -32,7 +32,8 @@ pub fn glass_draws<S>(cx: &Cx<S>) -> bool {
 pub fn glass(el: El, radius: f32) -> El { glass_with(el, radius, &Glass::default(), Color::TRANSPARENT) }
 
 /// [`glass`] tuned by `g`, with `tint` at `g.tint` alpha over the glass (its own alpha is
-/// ignored). `glass_with(el, r, &Glass::default(), c)` is `glass(el, r)`.
+/// ignored), white at `g.veil` alpha over that, and `g.hairline` white lines inside the top and
+/// bottom edges. `glass_with(el, r, &Glass::default(), c)` is `glass(el, r)`.
 pub fn glass_with(el: El, radius: f32, g: &Glass, tint: Color) -> El {
     // The shadow is the close one of the look the prism was fitted to, without its spread by
     // default: it stays under the element, so a small pill on a dark page gets no dark cloud.
@@ -50,7 +51,26 @@ pub fn glass_with(el: El, radius: f32, g: &Glass, tint: Color) -> El {
     let lens = Lens::prism().bend(g.bend).split(g.split).shade(g.shade).light(g.lights).ring(g.ring);
     let el = el.radius(radius).box_shadow(shadow).backdrop_lens(lens);
     let el = if g.frost > 0.0 { el.backdrop_blur(g.frost) } else { el };
-    if g.tint > 0.0 { el.fill(tint.alpha(g.tint.min(1.0))) } else { el }
+    let el = if g.hairline > 0.0 {
+        // One point in from the top and bottom edges; the caps fade them out toward the sides.
+        let line = |y: f32| Shadow { y, color: Color::WHITE.alpha(g.hairline.min(1.0)), inset: true, ..Default::default() };
+        el.box_shadow(line(1.0)).box_shadow(line(-1.0))
+    } else {
+        el
+    };
+    let tint = if g.tint > 0.0 { Some(tint.alpha(g.tint.min(1.0))) } else { None };
+    match (tint, g.veil > 0.0) {
+        (None, false) => el,
+        (Some(t), false) => el.fill(t),
+        (t, true) => el.fill(veil_over(t.unwrap_or(Color::TRANSPARENT), g.veil.min(1.0))),
+    }
+}
+
+/// White at alpha `v` over `under` (straight alpha), as one colour.
+fn veil_over(under: Color, v: f32) -> Color {
+    let a = v + under.a * (1.0 - v);
+    let mix = |c: f32| (v + c * under.a * (1.0 - v)) / a;
+    Color { r: mix(under.r), g: mix(under.g), b: mix(under.b), a }
 }
 
 /// The settings of [`glass_with`]. `Default` is [`glass`]'s look. The shadow is for a 41 point
@@ -77,6 +97,11 @@ pub struct Glass {
     pub shadow_blur: f32,
     pub shadow_spread: f32,
     pub shadow_alpha: f32,
+    /// Alpha of a white veil over the glass and the tint: it lifts a dark backdrop to a grey; 0 is
+    /// none.
+    pub veil: f32,
+    /// Alpha of the white lines one point inside the top and bottom edges; 0 is none.
+    pub hairline: f32,
 }
 
 impl Default for Glass {
@@ -87,7 +112,7 @@ impl Glass {
     /// [`glass`]'s look, for a `const`. Build a `Glass` from this (`Glass { frost: 6.0, ..Glass::DEFAULT }`),
     /// not from a full literal: a later field then does not break the build.
     pub const DEFAULT: Glass =
-        Glass { bend: 1.0, split: 1.0, shade: 1.0, lights: 1.0, ring: 1.0, frost: 0.0, tint: 0.0, shadow_x: 3.28, shadow_y: 9.82, shadow_blur: 33.0, shadow_spread: 0.0, shadow_alpha: 0.118 };
+        Glass { bend: 1.0, split: 1.0, shade: 1.0, lights: 1.0, ring: 1.0, frost: 0.0, tint: 0.0, shadow_x: 3.28, shadow_y: 9.82, shadow_blur: 33.0, shadow_spread: 0.0, shadow_alpha: 0.118, veil: 0.0, hairline: 0.0 };
 
     /// One flat JSON object: the field names as keys, in order, each number with at most three
     /// decimals.
@@ -96,6 +121,7 @@ impl Glass {
             ("bend", self.bend), ("split", self.split), ("shade", self.shade), ("lights", self.lights), ("ring", self.ring),
             ("frost", self.frost), ("tint", self.tint), ("shadow_x", self.shadow_x), ("shadow_y", self.shadow_y),
             ("shadow_blur", self.shadow_blur), ("shadow_spread", self.shadow_spread), ("shadow_alpha", self.shadow_alpha),
+            ("veil", self.veil), ("hairline", self.hairline),
         ];
         let body: Vec<String> = fields.iter().map(|(k, v)| format!("\"{k}\":{}", number(*v))).collect();
         format!("{{{}}}", body.join(","))
