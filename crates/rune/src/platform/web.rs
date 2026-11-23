@@ -185,10 +185,10 @@ struct GpuSide {
 
 impl GpuSide {
     /// The canvas's usage as the runtime sees it (`Cx::backdrop_copies`). A WebGL 2 canvas can't be
-    /// copied from, but the renderer then draws a frame with backdrop effects into a texture that
-    /// can (`Renderer::draw_relayed`).
-    fn usage(&self) -> wgpu::TextureUsages {
-        if self.gl { self.config.usage | wgpu::TextureUsages::COPY_SRC } else { self.config.usage }
+    /// copied from, but on a page with no compositor the renderer draws a frame with backdrop
+    /// effects into a texture that can (`Renderer::draw_relayed`).
+    fn usage(&self, compositor: bool) -> wgpu::TextureUsages {
+        if self.gl && !compositor { self.config.usage | wgpu::TextureUsages::COPY_SRC } else { self.config.usage }
     }
 }
 
@@ -763,7 +763,7 @@ impl<S: 'static> Browser<S> {
             Some((gpu, surface)) => {
                 let (lost, proxy) = (self.lost.clone(), self.proxy.clone());
                 match gpu_side(gpu, surface, physical, &mut rt, move |why| { *lost.borrow_mut() = Some(why); let _ = proxy.send_event(Wake::App); }) {
-                    Ok(side) => { rt.set_gpu_surface(Some(side.usage())); Draw::Gpu(side) }
+                    Ok(side) => { rt.set_gpu_surface(Some(side.usage(compositor.is_some()))); Draw::Gpu(side) }
                     Err(e) => { error(&e, window.canvas().as_ref(), self.embedded, self.document); self.end(event_loop); return; }
                 }
             }
@@ -861,7 +861,7 @@ impl<S: 'static> Browser<S> {
                 let _ = proxy.send_event(Wake::App);
             });
         }
-        r.rt.set_gpu_surface(Some(side.usage()));
+        r.rt.set_gpu_surface(Some(side.usage(r.compositor.is_some())));
         r.draw = Draw::Gpu(side);
         crate::marks::mark("web.handover.done");
         if let Some(window) = &self.window { window.request_redraw(); }
