@@ -590,15 +590,26 @@ fn drift_wanted() -> bool {
 }
 
 /// A flag the GPU's queue sets once the work submitted so far is done, waking the loop.
-fn when_done(queue: &wgpu::Queue, proxy: &EventLoopProxy<Wake>) -> Rc<Cell<bool>> {
+fn when_done(gpu: &Gpu, proxy: &EventLoopProxy<Wake>) -> Rc<Cell<bool>> {
     let flag = Rc::new(Cell::new(false));
     let set = PageOnly((flag.clone(), proxy.clone()));
-    queue.on_submitted_work_done(move || {
+    gpu.queue.on_submitted_work_done(move || {
         let PageOnly((flag, proxy)) = &set;
         flag.set(true);
         let _ = proxy.send_event(Wake::App);
     });
+    // WebGPU answers from the browser's promise. wgpu's GL backend answers only when the device is
+    // polled, which a submit does once, and the hand-over submits nothing until it is answered.
+    if gpu.adapter.get_info().backend == wgpu::Backend::Gl { poll_until(gpu.device.clone(), flag.clone(), 600); }
     flag
+}
+
+/// Polls `device` once a frame until `done`, at most `left` more times.
+fn poll_until(device: wgpu::Device, done: Rc<Cell<bool>>, left: u32) {
+    after(Duration::from_millis(16), move || {
+        device.poll(wgpu::PollType::Poll).ok();
+        if !done.get() && left > 1 { poll_until(device, done, left - 1); }
+    });
 }
 
 /// A value moved into a callback wgpu wants `Send`. In a page that callback runs on the page's
@@ -806,7 +817,7 @@ impl<S: 'static> Browser<S> {
         // The browser compiles the renderer's pipelines in its GPU process, in order: a submit
         // made after them is answered once they're built.
         side.gpu.queue.submit([]);
-        let built = when_done(&side.gpu.queue, &self.proxy);
+        let built = when_done(&side.gpu, &self.proxy);
         let Draw::Cpu { mut cpu, .. } = std::mem::replace(&mut r.draw, Draw::Moving) else { unreachable!("checked above") };
         cpu.half = crate::render::cpu_boot::HalfRounding::of_vendor(side.gpu.adapter.get_info().vendor);
         r.draw = Draw::HandingOver { cpu, side, built, done: None, since: Instant::now() };
@@ -951,7 +962,7 @@ impl<S: 'static> Browser<S> {
                         Ok(_) if side.renderer.checking_gpu() => crate::marks::mark("web.handover.warming"),
                         Ok(copy) => {
                             if let Some(copy) = copy { copy.count(cpu.pixels().to_vec()); }
-                            *done = Some(when_done(&side.gpu.queue, &self.proxy));
+                            *done = Some(when_done(&side.gpu, &self.proxy));
                             *since = Instant::now();
                             let proxy = self.proxy.clone();
                             after(FINISH_LIMIT + Duration::from_millis(50), move || { let _ = proxy.send_event(Wake::App); });
