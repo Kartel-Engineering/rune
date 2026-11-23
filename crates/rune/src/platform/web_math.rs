@@ -50,6 +50,14 @@ pub(crate) fn blend_target(offered: &[wgpu::TextureFormat], configured: wgpu::Te
     else { (configured, configured) }
 }
 
+/// Whether a page that started on the CPU hands over to this adapter. Not to WebGL 2 on a CPU
+/// device (SwiftShader, llvmpipe: wgpu names it from the renderer string), which draws a frame
+/// in seconds where the CPU painter takes milliseconds. A browser that hides that string reports
+/// another type, and the page hands over.
+pub(crate) fn hands_over(backend: wgpu::Backend, device: wgpu::DeviceType) -> bool {
+    !(backend == wgpu::Backend::Gl && device == wgpu::DeviceType::Cpu)
+}
+
 #[cfg(test)]
 #[path = "web_math_tests.rs"]
 mod tests;

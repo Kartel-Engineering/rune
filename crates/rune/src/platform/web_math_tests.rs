@@ -67,3 +67,13 @@ fn a_surface_draws_in_the_format_the_blend_mode_asks_for() {
     let (_, draws) = blend_target(&[Rgba8UnormSrgb], Rgba8UnormSrgb, true, false);
     assert_eq!(draws, Rgba8UnormSrgb);
 }
+
+#[test]
+fn a_page_on_the_cpu_stays_there_when_webgl_2_is_a_software_gpu() {
+    use wgpu::{Backend::{BrowserWebGpu, Gl}, DeviceType::{Cpu, DiscreteGpu, IntegratedGpu, Other}};
+    assert!(!hands_over(Gl, Cpu), "SwiftShader or llvmpipe: the CPU painter is faster");
+    // A real GPU, or one whose renderer string the browser hides (`Other`).
+    for device in [IntegratedGpu, DiscreteGpu, Other] { assert!(hands_over(Gl, device), "{device:?}"); }
+    // WebGPU on a CPU device keeps the hand-over it had.
+    assert!(hands_over(BrowserWebGpu, Cpu));
+}

@@ -196,7 +196,7 @@ impl GpuSide {
 /// `SurfaceMode`, with two canvases for its two surfaces).
 enum Draw {
     /// The CPU paints into its canvas under the GPU's, which stays see-through and takes the
-    /// input. `failed`: the GPU won't come (no WebGPU, or it was lost), so this stays.
+    /// input. `failed`: the GPU won't come (none, a software WebGL 2, or it was lost), so this stays.
     Cpu { cpu: cpu_canvas::CpuCanvas, failed: bool },
     /// The GPU is made and its canvas configured, still see-through. `built` turns true once
     /// the queue has answered a submit made after the renderer's pipelines, so the browser has
@@ -791,14 +791,20 @@ impl<S: 'static> Browser<S> {
     }
 
     /// The GPU answered while the page draws on the CPU: after the first frame, its side is made
-    /// (the browser compiles its pipelines) and the hand-over starts. A GPU that couldn't be made
-    /// leaves the page on the CPU for good.
+    /// (the browser compiles its pipelines) and the hand-over starts. A GPU that couldn't be made,
+    /// or a software WebGL 2 (`web_math::hands_over`), leaves the page on the CPU for good.
     fn gpu_came(&mut self) {
         if self.start != Start::CpuFirst { return; }
         let mut running = self.running.borrow_mut();
         let Some(r) = &mut *running else { return };
         if !r.presented || !matches!(r.draw, Draw::Cpu { failed: false, .. }) { return; }
         let Some(made) = self.pending.borrow_mut().take() else { return };
+        let made = made.and_then(|(gpu, surface)| {
+            let info = gpu.adapter.get_info();
+            if web_math::hands_over(info.backend, info.device_type) { return Ok((gpu, surface)); }
+            gpu.device.destroy();
+            Err(format!("{} is a software GPU; globalThis.RUNE_CPU_FIRST = \"off\" starts on it", info.name))
+        });
         let side = made.and_then(|(gpu, surface)| {
             let (lost, proxy) = (self.lost.clone(), self.proxy.clone());
             gpu_side(gpu, surface, r.size, &mut r.rt, move |why| { *lost.borrow_mut() = Some(why); let _ = proxy.send_event(Wake::App); })
