@@ -29,22 +29,27 @@ fn scene(look: &Look, _: &mut Cx<Look>) -> El {
 /// `relayed`, read back by drawing it onto a copyable texture. Also whether it took the relay.
 fn draw(look: Look, srgb: bool, usage: wgpu::TextureUsages, relayed: bool) -> (bool, Vec<u8>) {
     let gpu = Gpu::headless();
+    draw_on(&gpu, &mut None, look, srgb, usage, relayed, (W, H))
+}
+
+/// `draw` at `(w, h)` with `renderer`, made on `gpu` if there is none yet.
+fn draw_on(gpu: &Gpu, renderer: &mut Option<Renderer>, look: Look, srgb: bool, usage: wgpu::TextureUsages, relayed: bool, (w, h): (u32, u32)) -> (bool, Vec<u8>) {
     let (device, queue) = (&gpu.device, &gpu.queue);
-    let mut rt = Runtime::new(look, scene, (W as f32, H as f32), Env::new(false, 1.0));
+    let mut rt = Runtime::new(look, scene, (w as f32, h as f32), Env::new(false, 1.0));
     rt.set_srgb_blend(srgb);
     rt.frame(0.0);
     // A WebGL 2 canvas has no sRGB view: one that blends in sRGB encoding draws into the plain format.
     let format = if srgb { OFFSCREEN_FORMAT.remove_srgb_suffix() } else { OFFSCREEN_FORMAT };
-    let mut renderer = Renderer::new(device, format);
+    let renderer = renderer.get_or_insert_with(|| Renderer::new(device, format));
     renderer.set_srgb_blend(srgb);
-    renderer.prepare(device, queue, &mut rt.text.atlas, &rt.instances, (W, H));
+    renderer.prepare(device, queue, &mut rt.text.atlas, &rt.instances, (w, h));
     let target = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("canvas"), size: wgpu::Extent3d { width: W, height: H, depth_or_array_layers: 1 },
+        label: Some("canvas"), size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
         mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D2, format,
         usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING | usage, view_formats: &[],
     });
     let view = target.create_view(&Default::default());
-    let read = Offscreen::with_format(device, W, H, format);
+    let read = Offscreen::with_format(device, w, h, format);
     let mut encoder = device.create_command_encoder(&Default::default());
     let took = relayed && renderer.draw_relayed(device, &mut encoder, &view, [0.0, 0.0, 0.0, 1.0]);
     if !relayed { renderer.draw(&mut encoder, &view, [0.0, 0.0, 0.0, 1.0]); }
@@ -94,4 +99,18 @@ fn only_a_frame_with_a_backdrop_effect_on_a_canvas_that_cannot_be_copied_takes_t
     assert_eq!(relayed, direct, "and the same pixels");
     let (copyable, _) = draw(Look::Prism, true, wgpu::TextureUsages::COPY_SRC, true);
     assert!(!copyable, "a canvas that can be copied needs no relay");
+}
+
+/// One renderer's relay follows the canvas to a new size: the second frame draws as a fresh
+/// renderer draws it.
+#[test]
+fn the_relay_follows_the_canvas_to_a_new_size() {
+    let (gpu, none) = (Gpu::headless(), wgpu::TextureUsages::empty());
+    let mut renderer = None;
+    draw_on(&gpu, &mut renderer, Look::Prism, true, none, true, (W, H));
+    let (took, resized) = draw_on(&gpu, &mut renderer, Look::Prism, true, none, true, (160, 100));
+    let (_, fresh) = draw_on(&gpu, &mut None, Look::Prism, true, none, true, (160, 100));
+    assert!(took, "drawn through the relay");
+    let diff = max_diff(&resized, &fresh);
+    assert!(diff <= 1, "the resized frame draws as a fresh renderer's, max {diff} levels apart");
 }
