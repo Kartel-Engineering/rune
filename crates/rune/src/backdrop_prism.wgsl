@@ -312,8 +312,9 @@ fn prism(k: Slab, p: vec2<f32>, kp: f32, tune: vec4<f32>, lights: f32, frosted: 
         let a = prism_harm(PRISM_HA, th);
         let b = prism_bend(t * max(a.y, 0.2)) * a.x * prism_harm(PRISM_HK, th) * u * tune.x;
         let bend = prism_k4(b, vec4<f32>(0.25 * (b.x + b.y + b.z + b.w)), tune.y);
-        // Past the bands the middle shows the blur.
-        let frost = frosted * smoothstep(10.0, 24.0, t);
+        // Past the bands the middle shows the blur; the less the rim bends, the nearer the rim the
+        // blur starts, so with no bend it reaches the rim (no bands to keep sharp).
+        let frost = frosted * select(smoothstep(10.0 * tune.x, 24.0 * tune.x, t), 1.0, tune.x <= 0.0);
         for (var c = 0; c < 4; c = c + 1) {
             acc = acc + prism_read(k, q - n * bend[c], frost) * PRISM_W[c];
         }

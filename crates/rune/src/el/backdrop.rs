@@ -87,7 +87,7 @@ impl Lens {
     /// the ring stays about a pixel wide. A sharp corner barely bends. Of the slab's settings it
     /// reads only `light`; `bend`, `split`, `shade` and `ring` tune it, each 1 as fitted. With
     /// `El::backdrop_blur` it is frosted: the middle shows the blur, and the rim's bands, lights
-    /// and ring stay sharp.
+    /// and ring stay sharp. The blur starts nearer the rim as `bend` falls; at 0 it reaches the rim.
     pub const fn prism() -> Lens { Lens { prism: true, ..Lens::new() } }
     /// Height the flat top rises over the rim.
     pub const fn thickness(mut self, pt: f32) -> Lens { self.thickness = finite(pt, 0.0, 8.0).min(MAX_PT); self }
