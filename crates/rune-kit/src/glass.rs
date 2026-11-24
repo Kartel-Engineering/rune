@@ -33,7 +33,8 @@ pub fn glass_draws<S>(cx: &Cx<S>) -> bool {
 ///
 /// Labels on the glass sit on whatever is behind it, so their contrast is the app's job. It suits
 /// pills and bars, not window-sized panels: each pixel costs about three times a plain lens.
-/// Inside a see-through layer (`El::layer_opacity`) it reads the backdrop as opaque and draws dark.
+/// Inside a see-through layer (`El::layer_opacity`, a fade) it shows what the layer holds behind it,
+/// and the window shows through where the layer holds nothing.
 pub fn glass(el: El, radius: f32) -> El { glass_with(el, radius, &Glass::default(), Color::TRANSPARENT) }
 
 /// [`glass`] tuned by `g`, with `tint` at `g.tint` alpha over the glass (its own alpha is

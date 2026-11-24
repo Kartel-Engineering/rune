@@ -535,3 +535,26 @@ fn a_frosted_prism_with_no_bend_blurs_to_the_rim_and_a_strong_bend_keeps_its_fro
     let mid = edge(&strong, 100);
     assert!(mid < 25, "bend 2, in the middle: {mid}");
 }
+
+/// A frosted `Lens::prism()` pill with a label, in a layer at opacity `s.0` over a light page:
+/// a side panel as it fades in. The layer holds nothing under the glass.
+fn faded(s: &(f32, bool), _: &mut Cx<(f32, bool)>) -> El {
+    let page = rune::color::hex("#fbfaf8").unwrap();
+    let pill = el().absolute(PILL[0], PILL[1]).size(PILL[2], PILL[3]).radius(40.0).backdrop_lens(Lens::prism()).backdrop_blur(1.7)
+        .child(el().absolute(10.0, 10.0).size(20.0, 4.0).fill(Color::BLACK));
+    el().size(W, H).fill(page).child(el().absolute(0.0, 0.0).size(W, H).layer_opacity(s.0).child(pill))
+}
+
+#[test]
+fn a_prism_fading_in_a_layer_over_a_light_page_never_turns_dark() {
+    for srgb in [false, true] {
+        let (_, settled) = draw_in((1.0, srgb), faded, 1.0, srgb);
+        let still = at(&settled, 100, 60)[0] as i32;
+        for o in [0.2, 0.6, 0.85] {
+            let (rt, px) = draw_in((o, srgb), faded, 1.0, srgb);
+            assert!(rt.instances.iter().any(|i| i.params[1] == KIND_LAYER), "opacity {o} is a layer");
+            let mid = at(&px, 100, 60)[0] as i32;
+            assert!(mid >= still - 12, "sRGB {srgb}, opacity {o}: the middle {mid}, settled {still}");
+        }
+    }
+}
