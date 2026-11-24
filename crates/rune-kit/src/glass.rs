@@ -1,4 +1,5 @@
-//! Liquid glass for pills and floating bars: `Lens::prism()` with one close, soft shadow.
+//! Liquid glass for pills and floating bars: a lightly bent, lightly frosted `Lens::prism()` over a
+//! soft, wide shadow.
 
 use rune::{Color, Cx, El, Lens, Shadow};
 
@@ -9,8 +10,11 @@ pub fn glass_draws<S>(cx: &Cx<S>) -> bool {
     cx.backdrop_copies() && cx.on_gpu() && !cx.is_reduced_motion()
 }
 
-/// `el` as liquid glass with corner radius `radius`: `Lens::prism()` and one close, soft shadow,
-/// drawn for a 41 point radius and scaled to this one. No fill: what is behind shows through.
+/// `el` as liquid glass with corner radius `radius`, drawn for a 41 point radius and scaled to this
+/// one: a `Lens::prism()` with a fifth of its fitted bend and shade, no colour bands, most of its
+/// lights and a trace of its ring, a light frost, a faint white veil and white hairlines, over one
+/// wide, soft shadow that spreads past the element and falls below it. What is behind shows
+/// through, a little blurred and lifted.
 ///
 /// Call it only while [`glass_draws`] is true, and give the element a solid fill otherwise. Where
 /// the frame can't be copied the glass draws nothing, so a pill with no fill would vanish:
@@ -35,8 +39,6 @@ pub fn glass(el: El, radius: f32) -> El { glass_with(el, radius, &Glass::default
 /// ignored), white at `g.veil` alpha over that, and `g.hairline` white lines inside the top and
 /// bottom edges. `glass_with(el, r, &Glass::default(), c)` is `glass(el, r)`.
 pub fn glass_with(el: El, radius: f32, g: &Glass, tint: Color) -> El {
-    // The shadow is the close one of the look the prism was fitted to, without its spread by
-    // default: it stays under the element, so a small pill on a dark page gets no dark cloud.
     let k = radius / 41.0;
     // A value that is not a number draws as none; a huge one stops at 1000 points.
     let fin = |v: f32| if v.is_finite() { v.clamp(-1000.0, 1000.0) } else { 0.0 };
@@ -110,9 +112,12 @@ impl Default for Glass {
 
 impl Glass {
     /// [`glass`]'s look, for a `const`. Build a `Glass` from this (`Glass { frost: 6.0, ..Glass::DEFAULT }`),
-    /// not from a full literal: a later field then does not break the build.
+    /// not from a full literal: a later field then does not break the build. `Lens::prism()` at its
+    /// fitted look, under the close shadow it was fitted with, is `Glass { bend: 1.0, split: 1.0,
+    /// shade: 1.0, lights: 1.0, ring: 1.0, frost: 0.0, shadow_x: 3.28, shadow_y: 9.82, shadow_blur:
+    /// 33.0, shadow_spread: 0.0, shadow_alpha: 0.118, veil: 0.0, hairline: 0.0, ..Glass::DEFAULT }`.
     pub const DEFAULT: Glass =
-        Glass { bend: 1.0, split: 1.0, shade: 1.0, lights: 1.0, ring: 1.0, frost: 0.0, tint: 0.0, shadow_x: 3.28, shadow_y: 9.82, shadow_blur: 33.0, shadow_spread: 0.0, shadow_alpha: 0.118, veil: 0.0, hairline: 0.0 };
+        Glass { bend: 0.19, split: 0.0, shade: 0.196, lights: 0.821, ring: 0.071, frost: 1.714, tint: 0.0, shadow_x: 4.286, shadow_y: 21.429, shadow_blur: 61.429, shadow_spread: 21.429, shadow_alpha: 0.185, veil: 0.052, hairline: 0.167 };
 
     /// One flat JSON object: the field names as keys, in order, each number with at most three
     /// decimals.

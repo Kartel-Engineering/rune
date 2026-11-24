@@ -14,13 +14,14 @@ fn lenses(rt: &Runtime<()>) -> Vec<[f32; 4]> {
 }
 
 #[test]
-fn a_pill_is_prism_glass_with_one_close_shadow_scaled_to_its_radius() {
+fn a_pill_is_prism_glass_with_one_wide_shadow_and_two_hairlines_scaled_to_its_radius() {
     let mut rt = Runtime::new((), pill, (200.0, 120.0), Env::new(false, 1.0));
     rt.set_on_gpu(true);
     rt.set_backdrop_copies(true);
     rt.frame(0.0);
     let k = 30.0 / 41.0;
-    let want = [Shadow { x: 3.28 * k, y: 9.82 * k, blur: 33.0 * k, color: Color::BLACK.alpha(0.118), ..Default::default() }];
+    let line = |y| Shadow { y, color: Color::WHITE.alpha(0.167), inset: true, ..Default::default() };
+    let want = [Shadow { x: 4.286 * k, y: 21.429 * k, blur: 61.429 * k, spread: 21.429 * k, color: Color::BLACK.alpha(0.185), ..Default::default() }, line(1.0), line(-1.0)];
     assert_eq!(rt.presented_pose("pill").unwrap().shadows(), &want[..]);
     let lens = lenses(&rt);
     assert_eq!(lens.len(), 1, "one lens");
@@ -66,7 +67,7 @@ fn default_settings_build_the_same_glass() {
 fn the_default_settings_as_json() {
     assert_eq!(
         rune_kit::Glass::default().to_json(),
-        r#"{"bend":1,"split":1,"shade":1,"lights":1,"ring":1,"frost":0,"tint":0,"shadow_x":3.28,"shadow_y":9.82,"shadow_blur":33,"shadow_spread":0,"shadow_alpha":0.118,"veil":0,"hairline":0}"#
+        r#"{"bend":0.19,"split":0,"shade":0.196,"lights":0.821,"ring":0.071,"frost":1.714,"tint":0,"shadow_x":4.286,"shadow_y":21.429,"shadow_blur":61.429,"shadow_spread":21.429,"shadow_alpha":0.185,"veil":0.052,"hairline":0.167}"#
     );
     let g = rune_kit::Glass { tint: 0.08, frost: 12.0, shadow_x: -1.23456, ..Default::default() };
     assert!(g.to_json().contains(r#""frost":12,"tint":0.08,"shadow_x":-1.235,"#), "{}", g.to_json());
@@ -87,21 +88,24 @@ fn settings_that_are_not_numbers_draw_no_shadow_instead_of_a_broken_one() {
 }
 
 #[test]
-fn veil_and_hairline_are_off_by_default_and_draw_when_set() {
-    fn frosted(_: &(), _: &mut Cx<()>) -> El {
-        let g = rune_kit::Glass { veil: 0.14, hairline: 0.2, ..rune_kit::Glass::DEFAULT };
-        el().size(200.0, 120.0).child(rune_kit::glass_with(el().key("pill").absolute(20.0, 20.0).size(120.0, 60.0), 30.0, &g, Color::TRANSPARENT))
+fn veil_and_hairline_are_faint_by_default_draw_as_set_and_are_off_at_zero() {
+    fn view(g: &rune_kit::Glass, _: &mut Cx<rune_kit::Glass>) -> El {
+        el().size(200.0, 120.0).child(rune_kit::glass_with(el().key("pill").absolute(20.0, 20.0).size(120.0, 60.0), 30.0, g, Color::TRANSPARENT))
+    }
+    fn shadows(g: rune_kit::Glass) -> Vec<Shadow> {
+        let mut rt = Runtime::new(g, view, (200.0, 120.0), Env::new(false, 1.0));
+        rt.set_on_gpu(true);
+        rt.set_backdrop_copies(true);
+        rt.frame(0.0);
+        rt.presented_pose("pill").unwrap().shadows().to_vec()
     }
     let d = rune_kit::Glass::DEFAULT;
-    assert_eq!((d.veil, d.hairline), (0.0, 0.0));
-    assert!(d.to_json().ends_with(r#","veil":0,"hairline":0}"#), "{}", d.to_json());
-    let mut rt = Runtime::new((), frosted, (200.0, 120.0), Env::new(false, 1.0));
-    rt.set_on_gpu(true);
-    rt.set_backdrop_copies(true);
-    rt.frame(0.0);
+    assert_eq!((d.veil, d.hairline), (0.052, 0.167));
+    assert!(d.to_json().ends_with(r#","veil":0.052,"hairline":0.167}"#), "{}", d.to_json());
     let line = |y| Shadow { y, color: Color::WHITE.alpha(0.2), inset: true, ..Default::default() };
-    let shadows = rt.presented_pose("pill").unwrap().shadows().to_vec();
-    assert_eq!(&shadows[1..], &[line(1.0), line(-1.0)], "a white line inside the top and one inside the bottom");
+    let set = shadows(rune_kit::Glass { veil: 0.14, hairline: 0.2, ..d });
+    assert_eq!(&set[1..], &[line(1.0), line(-1.0)], "a white line inside the top and one inside the bottom");
+    assert_eq!(shadows(rune_kit::Glass { veil: 0.0, hairline: 0.0, ..d }).len(), 1, "at 0: the outer shadow alone");
 }
 
 #[test]
