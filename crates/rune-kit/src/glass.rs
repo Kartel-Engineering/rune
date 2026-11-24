@@ -1,6 +1,7 @@
 //! Liquid glass for pills and floating bars: a lightly bent, lightly frosted `Lens::prism()` over a
 //! soft, wide shadow.
 
+use rune::theme::{blends_srgb, srgb_decode, srgb_encode};
 use rune::{Color, Cx, El, Lens, Shadow};
 
 /// Whether [`glass`] can draw this frame: the window can copy its surface, a GPU draws it, and
@@ -37,7 +38,9 @@ pub fn glass(el: El, radius: f32) -> El { glass_with(el, radius, &Glass::default
 
 /// [`glass`] tuned by `g`, with `tint` at `g.tint` alpha over the glass (its own alpha is
 /// ignored), white at `g.veil` alpha over that, and `g.hairline` white lines inside the top and
-/// bottom edges. `glass_with(el, r, &Glass::default(), c)` is `glass(el, r)`.
+/// bottom edges. `glass_with(el, r, &Glass::default(), c)` is `glass(el, r)`. Where the glass does
+/// not draw (past `MAX_BACKDROP_LENSES`, or a frame that can't be copied) the fill and the
+/// hairlines still draw, over sharp content.
 pub fn glass_with(el: El, radius: f32, g: &Glass, tint: Color) -> El {
     let k = radius / 41.0;
     // A value that is not a number draws as none; a huge one stops at 1000 points.
@@ -68,10 +71,12 @@ pub fn glass_with(el: El, radius: f32, g: &Glass, tint: Color) -> El {
     }
 }
 
-/// White at alpha `v` over `under` (straight alpha), as one colour.
+/// White at alpha `v` over `under` (straight alpha), as one colour that paints as the two layers
+/// do: mixed in sRGB encoding when the frame blends there (`App::srgb_blend`), else in linear light.
 fn veil_over(under: Color, v: f32) -> Color {
     let a = v + under.a * (1.0 - v);
-    let mix = |c: f32| (v + c * under.a * (1.0 - v)) / a;
+    let (enc, dec): (fn(f32) -> f32, fn(f32) -> f32) = if blends_srgb() { (srgb_encode, srgb_decode) } else { (|c| c, |c| c) };
+    let mix = |c: f32| dec((v + enc(c) * under.a * (1.0 - v)) / a);
     Color { r: mix(under.r), g: mix(under.g), b: mix(under.b), a }
 }
 

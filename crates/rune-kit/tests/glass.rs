@@ -102,10 +102,24 @@ fn veil_and_hairline_are_faint_by_default_draw_as_set_and_are_off_at_zero() {
     let d = rune_kit::Glass::DEFAULT;
     assert_eq!((d.veil, d.hairline), (0.052, 0.167));
     assert!(d.to_json().ends_with(r#","veil":0.052,"hairline":0.167}"#), "{}", d.to_json());
-    let line = |y| Shadow { y, color: Color::WHITE.alpha(0.2), inset: true, ..Default::default() };
-    let set = shadows(rune_kit::Glass { veil: 0.14, hairline: 0.2, ..d });
+    let line = |y| Shadow { y, color: Color::WHITE.alpha(0.3), inset: true, ..Default::default() };
+    let set = shadows(rune_kit::Glass { veil: 0.14, hairline: 0.3, ..d });
     assert_eq!(&set[1..], &[line(1.0), line(-1.0)], "a white line inside the top and one inside the bottom");
     assert_eq!(shadows(rune_kit::Glass { veil: 0.0, hairline: 0.0, ..d }).len(), 1, "at 0: the outer shadow alone");
+}
+
+#[test]
+fn a_veil_with_no_tint_is_white_at_its_alpha() {
+    fn veiled(_: &(), _: &mut Cx<()>) -> El {
+        let g = rune_kit::Glass { tint: 0.0, veil: 0.14, ..rune_kit::Glass::DEFAULT };
+        el().size(200.0, 120.0).child(rune_kit::glass_with(el().key("pill").absolute(20.0, 20.0).size(120.0, 60.0), 30.0, &g, Color::TRANSPARENT))
+    }
+    let mut rt = Runtime::new((), veiled, (200.0, 120.0), Env::new(false, 1.0));
+    rt.set_on_gpu(true);
+    rt.set_backdrop_copies(true);
+    rt.frame(0.0);
+    let pill = rt.elements().into_iter().find(|e| e.key.as_deref() == Some("pill")).unwrap();
+    assert_eq!(pill.fill, Color::WHITE.alpha(0.14));
 }
 
 #[test]
@@ -121,4 +135,25 @@ fn the_veil_is_white_over_the_tint() {
     // Black at 0.5, then white at 0.5 over it: alpha 0.75, and premultiplied white 0.5.
     let fill = rt.instances.iter().map(|i| i.fill).find(|f| (f[3] - 0.75).abs() < 1e-4).expect("one fill at alpha 0.75");
     assert!((fill[0] - 0.5).abs() < 1e-4 && fill[0] == fill[1] && fill[1] == fill[2], "{fill:?}");
+}
+
+#[test]
+fn with_srgb_blending_the_veil_over_a_tint_paints_as_the_two_layers_do() {
+    fn tinted(_: &(), _: &mut Cx<()>) -> El {
+        let grey = Color { r: 0.5, g: 0.5, b: 0.5, a: 1.0 };
+        let g = rune_kit::Glass { tint: 0.5, veil: 0.5, ..rune_kit::Glass::DEFAULT };
+        el().size(200.0, 120.0).child(rune_kit::glass_with(el().key("pill").absolute(20.0, 20.0).size(120.0, 60.0), 30.0, &g, grey))
+    }
+    for srgb in [false, true] {
+        let mut rt = Runtime::new((), tinted, (200.0, 120.0), Env::new(false, 1.0));
+        rt.set_srgb_blend(srgb);
+        rt.set_on_gpu(true);
+        rt.set_backdrop_copies(true);
+        rt.frame(0.0);
+        // Grey at 0.5 under white at 0.5, premultiplied in the frame's blend space: 0.5 + 0.5 * 0.5 * grey.
+        let grey = if srgb { rune::theme::srgb_encode(0.5) } else { 0.5 };
+        let want = 0.5 + 0.25 * grey;
+        let fill = rt.instances.iter().map(|i| i.fill).find(|f| (f[3] - 0.75).abs() < 1e-4).expect("one fill at alpha 0.75");
+        assert!((fill[0] - want).abs() < 1e-4, "srgb {srgb}: {fill:?}, want {want}");
+    }
 }
