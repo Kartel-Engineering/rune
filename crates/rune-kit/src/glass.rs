@@ -75,8 +75,11 @@ pub fn glass_with(el: El, radius: f32, g: &Glass, tint: Color) -> El {
 /// do: mixed in sRGB encoding when the frame blends there (`App::srgb_blend`), else in linear light.
 fn veil_over(under: Color, v: f32) -> Color {
     let a = v + under.a * (1.0 - v);
-    let (enc, dec): (fn(f32) -> f32, fn(f32) -> f32) = if blends_srgb() { (srgb_encode, srgb_decode) } else { (|c| c, |c| c) };
-    let mix = |c: f32| dec((v + enc(c) * under.a * (1.0 - v)) / a);
+    let srgb = blends_srgb();
+    let mix = |c: f32| {
+        let m = (v + if srgb { srgb_encode(c) } else { c } * under.a * (1.0 - v)) / a;
+        if srgb { srgb_decode(m) } else { m }
+    };
     Color { r: mix(under.r), g: mix(under.g), b: mix(under.b), a }
 }
 
