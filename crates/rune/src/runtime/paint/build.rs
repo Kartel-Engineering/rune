@@ -687,6 +687,10 @@ impl<S: 'static> Runtime<S> {
                 .then(|| paint_slots::push_backdrop_blur(&mut self.instances, (n.vis.backdrop_blur, n.vis.backdrop_lens), ([r[0], r[1], w, h], radii, n.vis_flags.continuous_corners()),
                     (clip, fade, fade_origin), rounded, sc * s, (paint_own * pinh.paint_opacity * n.vis.paint_alpha).clamp(0.0, 1.0)));
             if n.vis.backdrop_lens.is_some() { backdrop_lenses += blur_hole.is_some() as usize; } else { backdrop_blurs += blur_hole.is_some() as usize; }
+            // Past the limit the effect draws only its fill, as on the CPU or in a pass that
+            // can't be copied, and its shadows leave the same hole they do there.
+            let blur_hole = blur_hole.or_else(|| ((n.vis.backdrop_blur > 0.0 || n.vis.backdrop_lens.is_some()) && !room)
+                .then(|| crate::system_material::clamp_radius(radii, w, h) * if n.vis_flags.continuous_corners() { -1.0 } else { 1.0 }));
             // The packed ABI carries one clip rectangle. Preserve a rectangular cut through
             // a rounded corner on a separate outer scope, never recenter the rounded mask.
             if !skip_paint && let Some((mask, _)) = rounded.or(own_round)

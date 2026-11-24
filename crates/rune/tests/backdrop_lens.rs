@@ -187,12 +187,15 @@ fn inside_a_layer_the_glass_shows_the_layer_as_a_blur_does() {
     assert!(l > n + 15 && (l - b).abs() <= 12, "lens {l}, blur {b}, layer alone {n}");
 }
 
-/// `n` squares in a row, each over its own black bar on white, lensed when `.1`.
+/// Where square `k` of `squares` sits: twelve to a row.
+fn square(k: usize) -> (f32, f32) { (4.0 + (k % 12) as f32 * 16.0, 4.0 + (k / 12) as f32 * 58.0) }
+
+/// `n` squares in rows, each over its own black bar on white, lensed when `.1`.
 fn squares(s: &(usize, bool), _: &mut Cx<(usize, bool)>) -> El {
     el().size(W, H).fill(Color::WHITE).children((0..s.0).flat_map(|k| {
-        let x = 4.0 + k as f32 * 16.0;
-        let glass = el().absolute(x, 30.0).size(12.0, 60.0).radius(6.0);
-        [el().absolute(x + 4.0, 40.0).size(4.0, 40.0).fill(Color::BLACK),
+        let (x, y) = square(k);
+        let glass = el().absolute(x, y).size(12.0, 52.0).radius(6.0);
+        [el().absolute(x + 4.0, y + 6.0).size(4.0, 40.0).fill(Color::BLACK),
          if s.1 { glass.backdrop_lens(Lens::new().thickness(4.0).bevel(4.0).gap(6.0)) } else { glass }]
     }))
 }
@@ -210,7 +213,7 @@ fn the_renderer_draws_glass_for_the_first_lenses_only() {
     assert_eq!(lensed.len(), rune::MAX_BACKDROP_LENSES);
     for k in rune::MAX_BACKDROP_LENSES..n {
         let mut r = lensed[0];
-        r.rect[0] = 4.0 + k as f32 * 16.0;
+        (r.rect[0], r.rect[1]) = square(k);
         rt.instances.push(r);
     }
     let size = (W as u32, H as u32);
@@ -224,11 +227,36 @@ fn the_renderer_draws_glass_for_the_first_lenses_only() {
     let px = target.read(&gpu.device);
     // Glass changes the pixels over its square; past the renderer's limit nothing does.
     let changed = |k: usize| {
-        let x0 = (4 + k * 16) as u32;
-        (x0..x0 + 12).flat_map(|x| (30..90).map(move |y| (x, y))).filter(|&(x, y)| at(&px, x, y) != at(&plain, x, y)).count()
+        let (x0, y0) = square(k);
+        let (x0, y0) = (x0 as u32, y0 as u32);
+        (x0..x0 + 12).flat_map(|x| (y0..y0 + 52).map(move |y| (x, y))).filter(|&(x, y)| at(&px, x, y) != at(&plain, x, y)).count()
     };
     for k in 0..rune::MAX_BACKDROP_LENSES { assert!(changed(k) > 20, "lens {k} draws glass: {} px", changed(k)); }
     for k in rune::MAX_BACKDROP_LENSES..n { assert_eq!(changed(k), 0, "lens {k} past the limit draws nothing"); }
+}
+
+/// `n` clear lensed squares over white, each with a wide dark shadow.
+fn shadowed(n: &usize, _: &mut Cx<usize>) -> El {
+    el().size(W, H).fill(Color::WHITE).children((0..*n).map(|k| {
+        let (x, y) = square(k);
+        el().absolute(x, y + 10.0).size(12.0, 32.0).radius(6.0).shadow(0.0, 6.0, Color::BLACK)
+            .backdrop_lens(Lens::new().thickness(4.0).bevel(4.0).gap(6.0))
+    }))
+}
+
+#[test]
+fn past_the_limit_the_glass_still_leaves_its_shadow_out_of_its_middle() {
+    let n = rune::MAX_BACKDROP_LENSES + 1;
+    let (rt, px) = draw(n, shadowed, 1.0);
+    let lenses = rt.instances.iter().filter(|i| i.params[1] == KIND_BACKDROP_BLUR).count();
+    assert_eq!(lenses, rune::MAX_BACKDROP_LENSES, "the first {} draw glass", rune::MAX_BACKDROP_LENSES);
+    // The middle of every square shows the white behind it: the glass's shadow doesn't darken it,
+    // drawn glass or past the limit, where only the (clear) fill draws.
+    for k in 0..n {
+        let (x, y) = square(k);
+        let mid = at(&px, x as u32 + 6, y as u32 + 26);
+        assert!(mid[..3].iter().all(|&v| v > 235), "square {k}'s middle: {mid:?}");
+    }
 }
 
 #[test]

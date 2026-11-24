@@ -10,8 +10,8 @@ use super::*;
 pub const MAX_BACKDROP_BLURS: usize = 4;
 /// Elements with glass (`El::backdrop_lens`, blurred or not) per frame, apart from
 /// `MAX_BACKDROP_BLURS`. Elements past this many draw only their fill. Each one splits the pass
-/// and copies its region, as a blur does, so a frame can split up to 12 times.
-pub const MAX_BACKDROP_LENSES: usize = 8;
+/// and copies its region, as a blur does, so a frame can split up to 20 times.
+pub const MAX_BACKDROP_LENSES: usize = 16;
 /// Uniform slots: one per blur and one per lens a frame can draw.
 const RECORDS: usize = MAX_BACKDROP_BLURS + MAX_BACKDROP_LENSES;
 
