@@ -487,3 +487,23 @@ fn a_frosted_prism_blurs_its_middle_and_keeps_its_ring() {
     let c = at(&frosted, (PILL[0] + PILL[2] / 2.0) as u32, (PILL[1] + PILL[3]) as u32);
     assert!(c.iter().take(3).all(|&v| (20..140).contains(&v)), "the ring below the bottom edge: {c:?}");
 }
+
+/// The largest change between two rows next to each other in column `x`, across the white and
+/// black line (rows 57 to 69): a sharp edge jumps, a blurred one steps.
+fn edge(px: &[u8], x: u32) -> i32 {
+    (57..69).map(|y| (at(px, x, y)[0] as i32 - at(px, x, y + 1)[0] as i32).abs()).max().unwrap()
+}
+
+#[test]
+fn a_frosted_prism_with_no_bend_blurs_to_the_rim_and_a_strong_bend_keeps_its_frost() {
+    let flat = draw(((|l: Lens| l.bend(0.0)) as fn(Lens) -> Lens, 8.0), tuned, 1.0).1;
+    let strong = draw(((|l: Lens| l.bend(2.0)) as fn(Lens) -> Lens, 8.0), tuned, 1.0).1;
+    // Six points in from the left cap: with no bend the blur reaches there, so the line is soft
+    // (a blur that starts where it does at bend 1 leaves it sharp there: a step of 134).
+    let cap = edge(&flat, 46);
+    assert!(cap < 60, "bend 0, near the rim: {cap}");
+    // In the middle at bend 2: the blur starts where it does at bend 1, so the line stays as soft
+    // (a blur pushed further in by the bend leaves a step of 38 there).
+    let mid = edge(&strong, 100);
+    assert!(mid < 25, "bend 2, in the middle: {mid}");
+}
