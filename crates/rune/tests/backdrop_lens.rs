@@ -122,6 +122,7 @@ fn many(n: &usize, _: &mut Cx<usize>) -> El {
 
 #[test]
 fn lenses_have_a_frame_limit_of_their_own() {
+    assert_eq!(rune::MAX_BACKDROP_LENSES, 16);
     let n = rune::MAX_BACKDROP_LENSES + 3;
     let mut rt = Runtime::new(n, many, (W, H), Env::new(false, 1.0));
     rt.frame(0.0);

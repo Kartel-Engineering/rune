@@ -264,9 +264,9 @@ fn prism_sdf(k: Slab, p: vec2<f32>, n: vec2<f32>, kp: f32) -> f32 {
     return sdf(k, p) + (PRISM_GROW + prism_harm(PRISM_HS, th).w - 1.0) * kp;
 }
 
-// The backdrop at q in linear light, premultiplied, its colour 0 outside the element's rect (its
-// alpha as read: inside a layer the backdrop can be transparent). `frost` (0…1) mixes in the
-// record's blur.
+// The backdrop at q in linear light, premultiplied, 0 outside the element's rect. Its alpha is as
+// read inside the rect: inside a layer the backdrop can be transparent. `frost` (0…1) mixes in
+// the record's blur.
 fn prism_read(k: Slab, q: vec2<f32>, frost: f32) -> vec4<f32> {
     let lo = clamp(q - k.rect.xy + vec2<f32>(0.5), vec2<f32>(0.0), vec2<f32>(1.0));
     let hi = clamp(k.rect.xy + k.rect.zw - q + vec2<f32>(0.5), vec2<f32>(0.0), vec2<f32>(1.0));
@@ -275,7 +275,15 @@ fn prism_read(k: Slab, q: vec2<f32>, frost: f32) -> vec4<f32> {
         c = mix(c, textureSampleLevel(blurred, smp, (q - u.place.xy) / u.place.zw, 0.0), frost);
     }
     let l = linear(c);
-    return vec4<f32>(l.rgb * (lo.x * lo.y * hi.x * hi.y), l.a);
+    let w = lo.x * lo.y * hi.x * hi.y;
+    return vec4<f32>(l.rgb * w, l.a * w);
+}
+
+// How much of the read at q lies inside the element's rect, 0…1: `prism_read`'s weight.
+fn prism_inside(k: Slab, q: vec2<f32>) -> f32 {
+    let lo = clamp(q - k.rect.xy + vec2<f32>(0.5), vec2<f32>(0.0), vec2<f32>(1.0));
+    let hi = clamp(k.rect.xy + k.rect.zw - q + vec2<f32>(0.5), vec2<f32>(0.0), vec2<f32>(1.0));
+    return lo.x * lo.y * hi.x * hi.y;
 }
 
 // `v` moved from `base` by `k` times: exactly `v` at 1, so the fitted look keeps its bytes.
@@ -288,8 +296,8 @@ fn prism_light(l: array<f32, 5>, n: vec2<f32>, t: f32) -> f32 {
 }
 
 // The prism at device pixel p: the glass (straight, sRGB-encoded), its own edge's signed distance in
-// device pixels, the ring (straight colour, alpha), and how opaque the backdrop is (`a`). `kp` is device pixels per point: the ring
-// and the edge are in points. The bend, gain and glow are in units of the corner radius (`prism_unit`).
+// device pixels, the ring (straight colour, alpha), and how opaque the backdrop is (`a`). `kp` is
+// device pixels per point: the ring and the edge are in points. The bend, gain and glow are in units of the corner radius (`prism_unit`).
 struct Prism { glass: vec3<f32>, d: f32, ring: vec4<f32>, a: f32 };
 
 // Device pixels per unit of depth: the fit's pill has a 41 point radius, so its numbers are in 41ths
@@ -307,6 +315,7 @@ fn prism(k: Slab, p: vec2<f32>, kp: f32, tune: vec4<f32>, lights: f32, frosted: 
     let o = array<vec2<f32>, 4>(vec2<f32>(-0.125, -0.375), vec2<f32>(0.375, -0.125), vec2<f32>(0.125, 0.375), vec2<f32>(-0.375, 0.125));
     var acc = vec3<f32>(0.0);
     var alpha = 0.0;
+    var inside = 0.0;
     for (var s = 0; s < 4; s = s + 1) {
         let q = p + o[s];
         let n = prism_normal(k, q);
@@ -322,13 +331,15 @@ fn prism(k: Slab, p: vec2<f32>, kp: f32, tune: vec4<f32>, lights: f32, frosted: 
         let frost = frosted * select(smoothstep(10.0 * fb, 24.0 * fb, t), 1.0, fb <= 0.0);
         for (var c = 0; c < 4; c = c + 1) {
             let b = prism_read(k, q - n * bend[c], frost);
+            inside = inside + prism_inside(k, q - n * bend[c]);
             acc = acc + b.rgb * PRISM_W[c];
             alpha = alpha + b.a;
         }
     }
-    // Straight colour: a transparent part of a layer is no colour, not black. Over an opaque
-    // backdrop the sixteen alphas sum to exactly 16, so the glass is as fitted.
-    alpha = alpha / 16.0;
+    // Straight colour: a transparent part of a layer is no colour, not black. Only reads inside
+    // the rect count (past it the copy holds no backdrop), and an alpha within 0.1% of opaque is
+    // opaque, so over an opaque backdrop the glass is as fitted.
+    alpha = select(alpha / max(inside, 1e-6), 1.0, inside <= 0.0 || alpha >= inside * 0.999);
     acc = acc * 0.25 / max(alpha, 1e-6);
     let n = prism_normal(k, p);
     let th = atan2(n.y, n.x);
